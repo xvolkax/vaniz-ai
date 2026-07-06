@@ -14,7 +14,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
@@ -97,14 +97,6 @@ def _rate_limit(key: str) -> None:
     q.append(now)
 
 
-async def require_auth(authorization: str | None = Header(default=None)) -> None:
-    if not settings.api_auth_token:
-        raise HTTPException(status_code=503, detail="API auth not configured")
-    expected = f"Bearer {settings.api_auth_token}"
-    if authorization != expected:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-
-
 @app.get("/healthz", response_model=HealthResponse)
 async def healthz() -> HealthResponse:
     return HealthResponse(
@@ -137,7 +129,6 @@ async def metrics() -> PlainTextResponse:
 )
 async def trigger_outbound(
     payload: OutboundCallRequest,
-    request: Request,
     user: CurrentUser = Depends(require_role(UserRole.agent)),
 ) -> OutboundCallResponse:
     _rate_limit(str(user.tenant_id))

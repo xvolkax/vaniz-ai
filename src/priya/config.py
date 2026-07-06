@@ -111,7 +111,6 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     metrics_port: int = Field(default=9090, alias="METRICS_PORT")
-    api_auth_token: str = Field(default="", alias="API_AUTH_TOKEN")
 
     # ---------- JWT auth (dashboard / SaaS control-plane) ----------
     # Secret used to sign JWTs. MUST be overridden in production via env.

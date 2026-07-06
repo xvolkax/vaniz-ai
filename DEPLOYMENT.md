@@ -3,8 +3,13 @@
 Target: **DigitalOcean Ubuntu 22.04 droplet** in **blr1 (Bangalore)** or
 **sgp1 (Singapore)** for lowest latency to Indian callers.
 
-Two supported paths: **Docker Compose** (recommended) and **systemd** (bare
-metal). Both run the same two services: the agent worker and the API.
+The platform runs five services: the **agent worker**, the **control-plane API**
+(JWT, multi-tenant), the **dashboard** (Caddy edge with automatic HTTPS),
+**PostgreSQL**, and a one-shot **migrate** job.
+
+> **Recommended path:** the full-stack Docker + Caddy flow with a domain and
+> automatic HTTPS — see **Section 8**. Sections 0–7 below cover the underlying
+> pieces (Docker Compose / systemd) and apply to both paths.
 
 ---
 
@@ -12,8 +17,10 @@ metal). Both run the same two services: the agent worker and the API.
 
 - LiveKit project (Cloud or self-hosted) → `LIVEKIT_URL`, key, secret.
 - Vobiz virtual number + SIP credentials.
-- API keys: Deepgram, OpenAI, Cartesia.
-- A domain for the API (e.g. `api.your-domain.com`) pointed at the droplet.
+- API keys: Deepgram/Sarvam, OpenAI, Cartesia.
+- A **domain** (e.g. `vaniz.in`) with A records pointed at the droplet — used by
+  Caddy for automatic HTTPS and served on one origin (dashboard + `/api`).
+- A strong **`JWT_SECRET`** (control-plane auth) and **`POSTGRES_PASSWORD`**.
 
 Recommended droplet: 2–4 vCPU / 4–8 GB (CPU-optimized) to start; scale on
 `priya_active_calls` + CPU.
@@ -27,18 +34,21 @@ Recommended droplet: 2–4 vCPU / 4–8 GB (CPU-optimized) to start; scale on
 apt-get update && apt-get install -y git
 git clone <your-repo-url> /opt/priya
 cd /opt/priya
-bash deploy/digitalocean_setup.sh      # installs Docker, nginx, ufw
+bash deploy/digitalocean_setup.sh      # installs Docker + ufw (opens 80/443)
 ```
 
 Configure secrets:
 
 ```bash
-cp .env.example .env
-nano .env        # fill LiveKit, Vobiz, Deepgram, OpenAI, Cartesia, DB, API token
+cp deploy/env.production.template .env
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # -> JWT_SECRET
+nano .env
 ```
 
-Set `SERVICE_REGION=blr1` (or `sgp1`) and a strong `POSTGRES_PASSWORD` +
-`API_AUTH_TOKEN`.
+Set at minimum: `SITE_ADDRESS` + `ACME_EMAIL` (domain/HTTPS), a strong
+`POSTGRES_PASSWORD` and matching `DATABASE_URL`, `JWT_SECRET`, `SERVICE_REGION`,
+and the LiveKit / Vobiz / STT-LLM-TTS credentials. Keep `KNOWLEDGE_SOURCE=db`.
+Leave `ALLOW_PUBLIC_SIGNUP=true` until the first tenant is created (Section 8.6).
 
 ---
 
@@ -68,14 +78,20 @@ dispatched to `agent_name=priya-agent` via the dispatch rule.
 ```bash
 docker compose up -d --build
 docker compose ps
-docker compose logs -f agent api
+docker compose logs -f web api agent
 ```
 
 Services:
 - `postgres` — data store (volume `pgdata`).
-- `migrate` — runs `alembic upgrade head` once, then exits.
+- `migrate` — runs `alembic upgrade head` once (creates tenants, users,
+  properties, leads, calls, campaigns, … ), then exits.
 - `agent` — the LiveKit worker (scale with `--scale agent=N`).
-- `api` — FastAPI on `:8080`.
+- `api` — FastAPI control plane, bound to `127.0.0.1:8080` (reached via the web proxy).
+- `web` — Caddy edge: serves the dashboard SPA + proxies `/api` → `api:8080`,
+  with automatic HTTPS for `SITE_ADDRESS`. Public on `:80` + `:443`.
+
+> The full-stack one-command flow is `bash deploy/deploy_fullstack.sh`
+> (build → migrate → up). See Section 8.
 
 Scale workers for concurrency:
 
@@ -112,34 +128,40 @@ Scale workers with a templated unit (copy `priya-agent.service` to
 
 ---
 
-## 4. nginx + TLS (API only)
+## 4. TLS / edge
 
-The voice/SIP media path goes **directly to LiveKit** — nginx only fronts the
-ops API.
+For the **Docker path (recommended)**, TLS is handled automatically by the
+`web` Caddy service — no manual nginx/certbot. Just set `SITE_ADDRESS` +
+`ACME_EMAIL` in `.env` and point DNS at the droplet (Section 8).
 
-```bash
-cp deploy/nginx/priya.conf /etc/nginx/sites-available/priya
-ln -s /etc/nginx/sites-available/priya /etc/nginx/sites-enabled/priya
-# edit server_name + cert paths in the file
-apt-get install -y certbot python3-certbot-nginx
-certbot --nginx -d api.your-domain.com
-nginx -t && systemctl reload nginx
-```
+For the **bare-metal path (systemd)**, front the API + dashboard with host nginx
+and certbot using `deploy/nginx/priya-dashboard.conf` (serves the built SPA and
+proxies `/api` → `127.0.0.1:8080`). See Section 8.9. The voice/SIP media path
+goes **directly to LiveKit** — the edge only fronts the dashboard + API.
 
 ---
 
 ## 5. Verify
 
 ```bash
-curl https://api.your-domain.com/healthz     # {"status":"ok",...}
-curl https://api.your-domain.com/readyz       # checks DB connectivity
+curl https://vaniz.in/api/healthz     # {"status":"ok",...}
+curl https://vaniz.in/api/readyz       # checks DB connectivity
 
-# Place a test outbound call
-curl -X POST https://api.your-domain.com/calls/outbound \
-  -H "Authorization: Bearer $API_AUTH_TOKEN" \
+# Control-plane auth is JWT + multi-tenant. Register the first org (or log in),
+# then use the returned token. Disable ALLOW_PUBLIC_SIGNUP afterwards (8.6).
+TOKEN=$(curl -s -X POST https://vaniz.in/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"owner@acme.com","password":"your-password"}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# Place a test outbound call (tenant-scoped via the JWT):
+curl -X POST https://vaniz.in/api/calls/outbound \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"phone_number":"+9198XXXXXXXX","lead_name":"Test"}'
 ```
+
+Or just open **https://vaniz.in/** and use the dashboard.
 
 Call an inbound test to your Vobiz number and confirm Priya greets in Hindi.
 Check a `calls` row and `conversation_summaries` row are written, and that

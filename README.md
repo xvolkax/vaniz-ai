@@ -1,41 +1,133 @@
-# Priya — Hindi-first AI Calling Agent for Indian Real-Estate
+# Priya — Multi-Tenant AI Calling Platform for Real-Estate
 
-Production-ready, low-latency voice agent built on the **latest LiveKit Agents
-(1.5+) architecture**. Priya handles inbound and outbound real-estate calls in
-**Hindi and English**, qualifies leads, and books site visits — with natural
-interruption handling and sub-second response targets.
+A **SaaS voice platform**: a Hindi-first, low-latency LiveKit voice agent that
+qualifies leads and books site visits, plus a **multi-tenant control-plane API**
+and a **broker dashboard** for managing leads, properties, calls, campaigns and
+analytics.
 
 ```
-Caller ⇄ Vobiz SIP ⇄ LiveKit ⇄ [ Deepgram Nova-3 → GPT-4o-mini → Cartesia Sonic ]
-                                   + Silero VAD + Multilingual Turn Detector
+Voice path:
+  Caller ⇄ Vobiz SIP ⇄ LiveKit ⇄ [ STT (Deepgram/Sarvam) → LLM → Cartesia TTS ]
+                                    + Silero VAD + Multilingual Turn Detector
+
+Control plane:
+  Broker Dashboard (React) ─HTTPS→ Caddy ─/api→ FastAPI (JWT, tenant-scoped)
+                                                    ↳ PostgreSQL (async SQLAlchemy)
+                                                    ↳ Campaign engine → outbound calls
 ```
 
-## Highlights
+Every broker is an isolated **tenant**. Users authenticate with **JWT**; all
+data (leads, properties, calls, campaigns, appointments) is scoped by
+`tenant_id`. The agent serves each tenant's own property catalog from the DB.
 
-- **Streaming everywhere**: STT, LLM and TTS all stream; nothing waits for full sentences.
-- **Non-deprecated LiveKit APIs**: `AgentSession` + `turn_handling=TurnHandlingOptions(...)`,
-  `@function_tool`, `RunContext`. No deprecated classes.
-- **Hindi-English code-mix**: Deepgram Nova-3 `language="multi"`, Cartesia Hindi voice,
-  and the semantic **MultilingualModel** turn detector layered over Silero VAD.
-- **Barge-in / interruptions**: enabled and tracked per call.
-- **Explicit conversation state machine**: greeting → qualification → requirements →
-  budget → timeline → booking → summary → completion.
-- **Function tools**: lead create/update, knowledge lookup, site-visit / callback /
-  agent-transfer booking (with calendar conflict detection), and call finalization.
-- **Async PostgreSQL** (SQLAlchemy 2.0 + asyncpg) off the audio hot-path.
-- **Observability**: structured JSON logs + Prometheus metrics (STT/LLM/TTS/E2E latency,
-  interruptions, conversion, booking rate, outcome).
-- **Pluggable adapters** (Phase 2 ready): CRM (Zoho/HubSpot/Salesforce), WhatsApp
-  follow-up, and RAG/vector DB — all behind clean interfaces.
+---
+
+## Components
+
+### 1. Voice agent (`src/priya/agent`)
+- Streaming STT → LLM → TTS on the non-deprecated LiveKit 1.x `AgentSession`
+  API, with `@function_tool` + `RunContext`.
+- Hindi-English code-mix; semantic MultilingualModel turn detector over Silero VAD.
+- Explicit state machine: greeting → qualification → requirements → budget →
+  timeline → booking → summary → completion.
+- Tools: lead update, **dynamic DB-backed property lookup**, site-visit /
+  callback / agent-transfer booking (calendar conflict detection), warm human
+  transfer, and call finalization.
+- On finalize, the call outcome is reconciled back onto the lead and (if part of
+  a campaign) the `CampaignTarget`.
+
+### 2. Control-plane API (`src/priya/api`)
+FastAPI, JWT-authenticated, fully tenant-scoped. Routers grouped by module under
+`src/priya/api/routers`.
+
+### 3. Broker dashboard (`frontend/`)
+React + TypeScript + Tailwind + TanStack Query + React Router. Pages: Dashboard,
+Leads, Properties, Calls, Campaigns, Appointments, Analytics, Settings. See
+`frontend/README.md`.
+
+---
+
+## Multi-tenancy & auth
+
+- **Tenants** (`tenants`) are the isolation boundary; every operational table
+  (`leads`, `calls`, `appointments`, `properties`, `campaigns`, …) carries a
+  `tenant_id`.
+- **Users** (`users`) belong to a tenant with a role. RBAC is hierarchical:
+  `owner > admin > agent > viewer`.
+- **JWT**: bcrypt password hashing + PyJWT tokens embedding `sub`, `tenant_id`
+  and `role`. Every request resolves the tenant from the token — never from the
+  client — guaranteeing data isolation. A `401` clears the session.
+- Config: `JWT_SECRET` (required, ≥32 bytes in prod), `JWT_ALGORITHM`,
+  `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `ALLOW_PUBLIC_SIGNUP`.
+
+---
+
+## API surface
+
+All endpoints except health/metrics require `Authorization: Bearer <JWT>` and
+are scoped to the caller's tenant.
+
+| Module | Endpoints |
+|--------|-----------|
+| Auth | `POST /auth/register` (tenant + owner), `POST /auth/login`, `GET /auth/me` |
+| Tenants | `GET /tenants/me`, `PATCH /tenants/me` (admin+) |
+| Users | `GET /users`, `POST /users`, `PATCH /users/{id}`, `DELETE /users/{id}` (admin+) |
+| Properties | `GET/POST /properties`, `GET/PATCH /properties/{id}`, `DELETE /properties/{id}` (admin+) |
+| Leads | `GET/POST /leads`, `GET /leads/export` (CSV), `POST /leads/import` (CSV), `GET/PATCH /leads/{id}`, `DELETE /leads/{id}` (admin+) |
+| Calls | `GET /calls`, `GET /calls/{id}`, `POST /calls/outbound` (agent+) |
+| Dashboard | `GET /dashboard/summary` |
+| Analytics | `GET /analytics/overview`, `/call-outcomes`, `/lead-sources`, `/conversion-trends` |
+| Campaigns | `GET/POST /campaigns`, `GET /campaigns/{id}`, `POST /campaigns/{id}/leads`, `.../start` `.../pause` `.../resume` `.../stop`, `GET /campaigns/{id}/analytics` |
+| Ops | `GET /healthz`, `GET /readyz`, `GET /metrics` |
+
+Leads support filtering (status, source, qualification-score range, date range,
+search), pagination and sorting. Calls support filtering (outcome, date range,
+duration, lead, campaign, search) with eager-loaded lead + summary.
+
+---
+
+## Properties (DB-backed knowledge)
+
+Each tenant's projects live in the `properties` table and are managed via the
+dashboard/API. During a call the agent reads the tenant's **live** catalog from
+the DB (`lookup_properties` tool + a per-call rendered prompt), so dashboard
+edits are reflected on the next call — no restart, no `project.yaml`.
+
+Set `KNOWLEDGE_SOURCE=db` (default). To seed a tenant from the legacy YAML:
+```bash
+python scripts/migrate_yaml_to_db.py --slug my-brokerage \
+  --owner-email owner@example.com --owner-password 'ChangeThis123' --phone +91XXXXXXXXXX
+```
+
+---
+
+## Campaign engine (`src/priya/campaigns`)
+
+Bulk outbound calling on top of the single-call engine, per tenant:
+- Configurable **concurrency**, **retry** count, **retry delay** (backoff), and
+  **working hours** (IST).
+- Targets are claimed with `SELECT … FOR UPDATE SKIP LOCKED` (safe across
+  workers), dialed via `place_outbound_call`, and reconciled from the finalized
+  call outcome — `CampaignTarget` is the source of truth for campaign analytics
+  (attempted / connected / interested / callbacks / site-visits / conversion).
+- Lifecycle: draft → running → paused → completed/failed. Running campaigns
+  resume automatically after an API restart (`CAMPAIGN_RESUME_ON_STARTUP`).
+
+---
 
 ## Latency targets
 
-| Stage | Target | How |
-|-------|--------|-----|
-| STT (Deepgram Nova-3) | < 300 ms | streaming, interim results, `endpointing_ms=25` |
-| LLM (GPT-4o-mini) | < 500 ms TTFT | streaming, preemptive generation |
-| TTS (Cartesia Sonic) | < 300 ms TTFB | streaming, first-byte playback |
-| End-to-end | < 1000 ms | tuned endpointing + preemptive generation + BLR/SGP region |
+| Stage | Target |
+|-------|--------|
+| STT | < 300 ms |
+| LLM TTFT | < 500 ms |
+| TTS TTFB | < 300 ms |
+| End-to-end | < 1000 ms |
+
+Live latency is exported at `/metrics` (`priya_*_latency_seconds`) and stored
+per call.
+
+---
 
 ## Project structure
 
@@ -43,107 +135,114 @@ Caller ⇄ Vobiz SIP ⇄ LiveKit ⇄ [ Deepgram Nova-3 → GPT-4o-mini → Carte
 priya-voice-agent/
 ├── src/priya/
 │   ├── config.py               # pydantic-settings, all env-driven
-│   ├── agent/                  # the voice agent (Phase 1 core)
-│   │   ├── worker.py           # LiveKit worker entrypoint + pipeline
-│   │   ├── assistant.py        # PriyaAgent (persona + tools)
-│   │   ├── prompts.py          # persona prompt + per-state guidance
-│   │   ├── state.py            # conversation state machine + lead scoring
-│   │   ├── context.py          # per-call runtime context (userdata)
-│   │   ├── tools.py            # lead/knowledge function tools
-│   │   ├── booking_tools.py    # site-visit / callback / transfer tools
-│   │   ├── completion.py       # summary, scoring, finalize + follow-up
-│   │   └── completion_tools.py # finalize_call tool
+│   ├── auth/                   # JWT security + FastAPI deps (RBAC, tenant scope)
+│   ├── agent/                  # voice agent (worker, tools, prompts, completion)
+│   ├── campaigns/              # outbound campaign execution engine
 │   ├── telephony/              # Vobiz SIP (inbound trunk, outbound, dispatch)
-│   ├── stt/llm/tts             # provided by LiveKit plugins (no custom code)
-│   ├── knowledge/              # retrieval abstraction (markdown → vector-ready)
-│   ├── crm/                    # adapter pattern (noop + Zoho/HubSpot/SF stubs)
-│   ├── calendar/               # DB calendar + Google Calendar (conflict detection)
-│   ├── whatsapp/               # follow-up interface (noop + Cloud API stub)
+│   ├── knowledge/              # retrieval abstraction (markdown / vector-ready)
+│   ├── crm/ · calendar/ · whatsapp/   # pluggable adapters
 │   ├── db/                     # async SQLAlchemy models + repositories
 │   ├── analytics/              # Prometheus metrics + latency tracker
-│   └── api/                    # FastAPI control plane (health/metrics/outbound)
-├── scripts/                    # setup_sip, init_db, benchmarks, outbound
-├── migrations/                 # Alembic (async)
-├── deploy/                     # nginx, systemd, DigitalOcean setup
-├── tests/                      # pytest (state, completion, knowledge, factories)
+│   └── api/
+│       ├── main.py             # app wiring (routers, lifespan, engine startup)
+│       ├── schemas.py          # Pydantic request/response models
+│       └── routers/            # auth, tenants, users, properties, leads,
+│                               #   calls, dashboard, analytics, campaigns
+├── frontend/                   # React broker dashboard (Vite + TS + Tailwind)
+├── scripts/                    # setup_sip, migrate_yaml_to_db, benchmarks, ...
+├── migrations/                 # Alembic (async) — 0001..0006
+├── deploy/                     # Caddy/nginx, systemd, DigitalOcean setup
+├── tests/                      # pytest
 ├── Dockerfile / docker-compose.yml / Makefile
 └── ARCHITECTURE.md / DEPLOYMENT.md
 ```
 
+Data model: `tenants`, `users`, `properties`, `leads`, `calls`,
+`conversation_summaries`, `appointments`, `audit_logs`, `campaigns`,
+`campaign_targets`.
+
+---
+
 ## Local development
 
-Prereqs: Python 3.11+, Docker (for Postgres), and API keys for LiveKit, Deepgram,
-OpenAI, Cartesia.
+Prereqs: Python 3.11+, Node 20+, Docker (for Postgres), and API keys for
+LiveKit, Deepgram/Sarvam, OpenAI, Cartesia.
 
+### Backend
 ```bash
-# 1. Install
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-# 2. Configure
-cp .env.example .env         # fill in credentials
+cp .env.example .env         # fill in credentials + a strong JWT_SECRET
+make dev-db                  # local Postgres in Docker
+make migrate                 # alembic upgrade head  (or: make init-db)
+make setup-sip               # provision Vobiz SIP (once) → copy IDs into .env
 
-# 3. Database
-make dev-db                  # start local Postgres in Docker
-make init-db                 # create tables (or: make migrate)
-
-# 4. Provision Vobiz SIP (once) — copy printed IDs into .env
-make setup-sip
-
-# 5. Run (two terminals)
-make run-agent               # LiveKit worker (dev mode)
-make run-api                 # FastAPI control plane
+# two terminals
+make run-agent               # LiveKit worker
+make run-api                 # FastAPI control plane on :8080
 ```
 
-Trigger a test outbound call:
-
+### Frontend
 ```bash
+cd frontend
+npm install
+npm run dev                  # http://localhost:5173 (proxies /api → :8080)
+```
+
+### Auth flow (get a JWT, then call the API)
+```bash
+# Register the first organization (returns a token). Disable ALLOW_PUBLIC_SIGNUP after.
+curl -X POST http://localhost:8080/auth/register -H "Content-Type: application/json" \
+  -d '{"tenant_name":"Acme Realty","tenant_slug":"acme","email":"owner@acme.com","password":"change-me-123"}'
+
+# Or log in:
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" \
+  -d '{"email":"owner@acme.com","password":"change-me-123"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# Use the JWT (tenant-scoped). Example: trigger an outbound call.
 curl -X POST http://localhost:8080/calls/outbound \
-  -H "Authorization: Bearer $API_AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"phone_number":"+9198XXXXXXXX","lead_name":"Rahul"}'
 ```
 
-## Benchmarks
+---
+
+## Testing & benchmarks
 
 ```bash
-make bench-llm     # GPT-4o-mini TTFT (target < 500 ms)
-make bench-tts     # Cartesia TTFB (target < 300 ms)
-make bench-e2e     # estimated end-to-end (target < 1000 ms)
-python scripts/benchmark_stt.py --audio sample_hindi.wav   # Deepgram (< 300 ms)
-```
-
-Live latency is also exported at `/metrics` (`priya_*_latency_seconds`).
-
-## Testing
-
-```bash
-make test          # pytest
+make test          # pytest (state machine, scoring, completion, knowledge, factories)
 make lint          # ruff + mypy
+make bench-llm     # GPT-4o-mini TTFT
+make bench-tts     # Cartesia TTFB
+make bench-e2e     # estimated end-to-end
 ```
 
-The tests cover the state machine, lead scoring, summary formatting, knowledge
-retrieval and adapter factories — all without network access.
+---
 
 ## Docker
 
 ```bash
-docker compose up -d --build   # postgres + migrate + agent + api
-docker compose logs -f agent api
+docker compose up -d --build   # postgres + migrate + agent + api + web (dashboard)
+docker compose logs -f web api agent
+docker compose up -d --scale agent=3   # scale voice workers
 ```
 
-## Phase 2 (interfaces only)
+Production (domain + automatic HTTPS via Caddy) is documented in
+`DEPLOYMENT.md` (section 8).
 
-CRM, WhatsApp, analytics dashboards, and RAG/vector DB are wired as clean
-adapters/factories selected by env vars (`CRM_PROVIDER`, `WHATSAPP_PROVIDER`,
-`RAG_PROVIDER`). Phase 1 defaults (`noop`, `markdown`, DB calendar) work out of
-the box; enabling a real provider requires only implementing its stub and
-flipping the env var — no changes to agent code. See `ARCHITECTURE.md`.
+---
 
 ## Security
 
-- All secrets via environment variables; nothing hardcoded.
-- Input validation (Pydantic) on the outbound API; E.164 phone validation.
-- Bearer-token auth + in-memory rate limiting on the outbound endpoint.
-- `/metrics` restricted by nginx to the monitoring network.
-- Non-root Docker user; systemd hardening flags.
+- **JWT auth** (bcrypt hashing + PyJWT); tokens carry tenant + role. Every
+  request is tenant-scoped from the token; RBAC enforced per endpoint.
+- **Multi-tenant isolation**: all queries filter by `tenant_id`; a user can
+  never read or mutate another tenant's data.
+- `JWT_SECRET` must be a long random value in production. Set
+  `ALLOW_PUBLIC_SIGNUP=false` after creating your first tenant.
+- **TLS** terminates at Caddy (automatic Let's Encrypt); the API binds to
+  localhost behind the proxy. Voice/SIP media goes directly to LiveKit.
+- `/metrics` should be restricted to your monitoring network.
+- Pydantic validation (E.164 phone, etc.); non-root Docker user; systemd
+  hardening for the bare-metal path.
