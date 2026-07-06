@@ -1,0 +1,173 @@
+# ---------------------------------------------------------------------------
+# PROJECT CATALOG (one builder, many projects) — TWO-TIER schema.
+#
+# Loaded ONCE at startup; the WHOLE thing is injected into the LLM context.
+# NO retrieval / RAG at runtime — the model answers directly from this.
+#
+# TIER 1 (shared): facts that are the SAME for every project — statutory
+#   charges (GST, stamp duty), legal defaults, builder credibility, loan banks,
+#   plot rules. Stated ONCE to keep the prompt small (low latency).
+# TIER 2 (per-project): only what actually VARIES (price, location, possession,
+#   carpet area, amenities...).
+#
+# Keep values short and speakable — they are read out on a phone call.
+# Override the path with the PROJECT_DATA_PATH env var.
+# ---------------------------------------------------------------------------
+
+# ===== TIER 1: shared builder / company info =====
+builder_name: "Patna Realty"            # edit to your company name
+region: "Patna aur aas-paas (Hajipur, Bihta, Sonpur, Naubatpur)"
+builder_description: "Patna aur aas-paas ke ilaakon mein apartments aur RERA-approved residential plots ke projects."
+
+# Builder credibility (buyers check track record / delay penalty)
+years_in_business: "15+ saal"
+completed_projects: "22+ projects Patna, Hajipur aur aas-paas mein time par delivered"
+track_record: "On-time possession ka strong record, RERA-compliant delivery"
+penalty_clause: "RERA ke mutabik possession delay par buyer ko interest/penalty milta hai (agreement mein clause hai)"
+
+# Contact / follow-up
+site_visit_contact: "+91 98860 12345"
+whatsapp_number: "+91 98860 12345"
+brochure_available: true
+
+# Finance (common across projects)
+loan_banks:
+  - "SBI"
+  - "HDFC"
+  - "ICICI"
+  - "Axis Bank"
+  - "LIC Housing Finance"
+emi_estimate: "80 lakh loan, ~8.5% par 20 saal = lagbhag 69,000 rupaye/month EMI"
+
+# Cost break-up (statutory in Bihar — same for all projects)
+cost_breakup:
+  gst: "Under-construction par 5% GST; ready-to-move / OC-received units par GST nahi lagta"
+  stamp_duty_registration: "Bihar mein stamp duty 6% (mahila khareedar 5%) + registration ~2% — yaani lagbhag 8% (mahila ~7%) extra"
+  hidden_charges: "Floor rise, PLC (corner/park-facing), clubhouse membership aur parking charges alag ho sakte hain; final quote mein sab clearly bataya jaata hai"
+
+# Legal status (common)
+legal:
+  title: "Sabhi projects clear aur marketable title par; koi legal dispute nahi"
+  approvals: "Building plan, layout aur zaroori municipal approvals complete"
+  oc_cc: "Possession ke samay OC/CC (Occupancy/Completion Certificate) diya jaata hai"
+
+# Plot rules (common to all PLOT projects)
+plot_info:
+  registry: "Full payment par turant registry"
+  mutation: "Registry ke baad dakhil-kharij (mutation) mein poori help ki jaati hai"
+  land_use: "Residential use ke liye NA-converted, RERA-approved layouts"
+  govt_approval: "Sabhi plots par zaroori government approvals maujood hain"
+
+# Market / investment note (for appreciation & resale questions)
+market_note: "Patna mein Bailey Road, Kankarbagh aur Danapur high-demand aur achhe resale ke liye jaane jaate hain; Bihta, Sonpur aur Naubatpur ke plots highway/expressway growth ke chalte long-term appreciation ke liye achhe hain"
+
+# ===== TIER 2: project catalog (only varying facts) =====
+projects:
+  - id: danapur_greens
+    project_name: "Danapur Greens"
+    property_type: "Apartment"
+    location: "Danapur, Patna"
+    price: "2 BHK from 62 lakh, 3 BHK from 84 lakh"
+    possession: "December 2027"
+    carpet_area: "2 BHK: 950-1100 sq ft, 3 BHK: 1300-1550 sq ft"
+    maintenance: "3 rupaye per sq ft per month"
+    parking: "Har unit ke saath ek covered car park"
+    construction_status: "Structure work chal raha hai"
+    amenities:
+      - "Clubhouse"
+      - "Gym"
+      - "Children's Play Area"
+    connectivity: "Danapur station aur AIIMS Patna paas mein"
+
+  - id: saguna_heights
+    project_name: "Saguna Heights"
+    property_type: "Apartment"
+    location: "Saguna More, Patna"
+    price: "2 BHK from 68 lakh, 3 BHK from 92 lakh"
+    possession: "Ready to Move"
+    connectivity: "Bailey Road aur Danapur ke beech, metro corridor ke paas"
+
+  - id: bailey_road_residency
+    project_name: "Bailey Road Residency"
+    property_type: "Apartment"
+    location: "Bailey Road, Patna"
+    price: "2 BHK from 95 lakh, 3 BHK from 1.35 crore"
+    possession: "June 2028"
+    connectivity: "Bailey Road prime location, schools aur hospitals paas mein"
+
+  - id: kankarbagh_premium
+    project_name: "Kankarbagh Premium Homes"
+    property_type: "Apartment"
+    location: "Kankarbagh, Patna"
+    price: "2 BHK from 78 lakh, 3 BHK from 1.10 crore"
+    possession: "Ready to Move"
+
+  - id: patliputra_enclave
+    project_name: "Patliputra Enclave"
+    property_type: "Apartment"
+    location: "Patliputra Colony, Patna"
+    price: "3 BHK from 1.25 crore"
+    possession: "March 2028"
+
+  - id: gola_road_homes
+    project_name: "Gola Road Homes"
+    property_type: "Apartment"
+    location: "Gola Road, Patna"
+    price: "2 BHK from 58 lakh, 3 BHK from 82 lakh"
+
+  - id: digha_river_view
+    project_name: "Digha River View"
+    property_type: "Apartment"
+    location: "Digha, Patna"
+    price: "2 BHK from 72 lakh, 3 BHK from 96 lakh"
+
+  - id: khagaul_residency
+    project_name: "Khagaul Residency"
+    property_type: "Apartment"
+    location: "Khagaul, Patna"
+    price: "2 BHK from 55 lakh, 3 BHK from 79 lakh"
+
+  - id: hajipur_garden_city
+    project_name: "Hajipur Garden City"
+    property_type: "Apartment"
+    location: "Hajipur"
+    price: "2 BHK from 42 lakh, 3 BHK from 65 lakh"
+
+  - id: vaishali_heights
+    project_name: "Vaishali Heights"
+    property_type: "Apartment"
+    location: "Hajipur"
+    price: "2 BHK from 48 lakh, 3 BHK from 72 lakh"
+
+  - id: bihta_future_city
+    project_name: "Bihta Future City"
+    property_type: "Plot"
+    location: "Bihta"
+    price: "Plots from 1,400 rupaye per sq ft"
+    road_width: "30 feet internal roads"
+    connectivity: "Bihta airport aur NH-922 ke paas"
+
+  - id: danapur_plot_city
+    project_name: "Danapur Plot City"
+    property_type: "Plot"
+    location: "Danapur"
+    price: "1200-2400 sq ft residential plots from 32 lakh"
+    road_width: "25-30 feet roads"
+
+  - id: hajipur_green_plots
+    project_name: "Hajipur Green Plots"
+    property_type: "Plot"
+    location: "Hajipur"
+    price: "1000-2000 sq ft plots from 18 lakh"
+
+  - id: sonpur_growth_corridor
+    project_name: "Sonpur Growth Corridor"
+    property_type: "Plot"
+    location: "Near Hajipur-Sonpur Road"
+    price: "Plots from 22 lakh"
+
+  - id: naubatpur_investment_plots
+    project_name: "Naubatpur Investment Plots"
+    property_type: "Plot"
+    location: "Naubatpur"
+    price: "Plots from 16 lakh"

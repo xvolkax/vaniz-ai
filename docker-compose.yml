@@ -1,0 +1,92 @@
+# =========================================================================
+# Priya Voice Agent — production compose
+#   * postgres : PostgreSQL 16
+#   * agent    : LiveKit agent worker (Deepgram+GPT-4o-mini+Cartesia pipeline)
+#   * api      : FastAPI control plane (health, metrics, outbound trigger)
+#   * migrate  : one-shot Alembic migration runner
+# =========================================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-priya}
+      POSTGRES_USER: ${POSTGRES_USER:-priya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-priya}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-priya} -d ${POSTGRES_DB:-priya}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5433:5432"
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  agent:
+    build: .
+    command: python -m priya.agent.worker start
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Voice workloads are CPU-bound (VAD/turn detector). Scale replicas for concurrency.
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  api:
+    build: .
+    command: uvicorn priya.api.main:app --host 0.0.0.0 --port 8080
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    # Bound to localhost only — public traffic reaches the API through the web
+    # (nginx) service's /api proxy, not directly.
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    # Public edge (Caddy): serves the dashboard SPA + proxies /api -> api:8080,
+    # with automatic HTTPS for $SITE_ADDRESS. Certs persist in caddy_data.
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

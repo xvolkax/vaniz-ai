@@ -1,0 +1,21 @@
+[Unit]
+Description=Priya Voice Agent API (control plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=priya
+Group=priya
+WorkingDirectory=/opt/priya
+EnvironmentFile=/opt/priya/.env
+Environment=PYTHONPATH=/opt/priya/src
+ExecStart=/opt/priya/.venv/bin/uvicorn priya.api.main:app --host 127.0.0.1 --port 8080 --workers 2
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+# Caddy edge for the broker dashboard.
+#   * Automatic HTTPS via Let's Encrypt for {$SITE_ADDRESS}.
+#   * Serves the built SPA from /srv (client-side routing fallback).
+#   * Reverse-proxies /api/* -> the FastAPI container (prefix stripped).
+# SITE_ADDRESS and ACME_EMAIL are injected from the environment (docker-compose).
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	encode gzip zstd
+
+	# API — strip the /api prefix so /api/auth/login -> api:8080/auth/login.
+	handle_path /api/* {
+		reverse_proxy api:8080
+	}
+
+	# Static SPA with client-side routing fallback.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

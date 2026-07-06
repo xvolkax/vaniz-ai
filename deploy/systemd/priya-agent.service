@@ -1,0 +1,25 @@
+[Unit]
+Description=Priya LiveKit Voice Agent Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=priya
+Group=priya
+WorkingDirectory=/opt/priya
+EnvironmentFile=/opt/priya/.env
+Environment=PYTHONPATH=/opt/priya/src
+ExecStart=/opt/priya/.venv/bin/python -m priya.agent.worker start
+Restart=always
+RestartSec=3
+# Give in-flight calls time to finalize on stop
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

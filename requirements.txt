@@ -1,0 +1,33 @@
+# Pinned runtime dependencies (Phase 1). See pyproject.toml for optional extras.
+# LiveKit Agents 1.x + plugins
+livekit-agents[deepgram,openai,cartesia,silero,turn-detector]>=1.5,<2
+livekit-plugins-sarvam>=0.2
+livekit-plugins-noise-cancellation>=0.2
+livekit-api>=1.0
+
+# API / models
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+email-validator>=2.1
+python-multipart>=0.0.9
+
+# Auth (SaaS control-plane)
+PyJWT>=2.9
+bcrypt>=4.1
+
+# Async Postgres
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30
+alembic>=1.14
+
+# Observability
+prometheus-client>=0.21
+structlog>=24.4
+
+# Utilities
+httpx>=0.27
+tenacity>=9.0
+python-dotenv>=1.0
+PyYAML>=6.0
