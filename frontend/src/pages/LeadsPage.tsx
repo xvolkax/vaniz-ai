@@ -10,6 +10,7 @@ import { Pagination } from "@/components/ui/Pagination";
 import { ErrorState } from "@/components/ui/States";
 import { LeadStatusBadge, TemperatureBadge, temperature } from "@/components/StatusBadges";
 import { LeadDetailDrawer } from "@/components/LeadDetailDrawer";
+import { AddLeadModal } from "@/components/AddLeadModal";
 import { formatMoney, titleCase, initials, relativeTime } from "@/lib/format";
 import { useAuth } from "@/auth/AuthContext";
 
@@ -32,6 +33,8 @@ export function LeadsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [temp, setTemp] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   const [draft, setDraft] = useState({
     search: params.get("search") ?? "",
@@ -74,6 +77,7 @@ export function LeadsPage() {
             <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importMut.mutate(f); e.target.value = ""; }} />
             {hasRole("agent") && <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={importMut.isPending}><Icon name="upload" className="h-4 w-4" /> Import</Button>}
             <Button variant="secondary" onClick={exportCsv}><Icon name="download" className="h-4 w-4" /> Export</Button>
+            {hasRole("agent") && <Button onClick={() => setShowAdd(true)}><Icon name="plus" className="h-4 w-4" /> Add Lead</Button>}
           </>
         }
       />
@@ -146,6 +150,26 @@ export function LeadsPage() {
       )}
 
       <LeadDetailDrawer leadId={openId} onClose={() => setOpenId(null)} />
+
+      {showAdd && (
+        <AddLeadModal
+          onClose={() => setShowAdd(false)}
+          onCreated={(lead) => {
+            setShowAdd(false);
+            setOffset(0); // jump to first page so the newest lead is visible on top
+            qc.invalidateQueries({ queryKey: ["leads"] });
+            setToast(`Lead added: ${lead.name || lead.phone_number}`);
+            window.setTimeout(() => setToast(null), 3500);
+          }}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-pop animate-fade-in">
+          <Icon name="check" className="h-4 w-4 text-emerald-400" />
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
