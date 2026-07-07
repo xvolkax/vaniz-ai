@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM
 
 revision = "0002_lead_source"
 down_revision = "0001_initial_saas"
 branch_labels = None
 depends_on = None
 
-lead_source = sa.Enum(
+# create_type=False: created explicitly (idempotent) below; add_column must not
+# re-emit CREATE TYPE.
+lead_source = ENUM(
     "inbound_call", "outbound_call", "manual", "csv_import", "api", "other",
-    name="leadsource",
+    name="leadsource", create_type=False,
 )
 
 

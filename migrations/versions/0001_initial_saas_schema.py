@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy.dialects.postgresql import ENUM, JSON
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 revision = "0001_initial_saas"
@@ -20,29 +20,38 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-# Enum type definitions (created once, reused across tables).
-call_direction = sa.Enum("inbound", "outbound", name="calldirection")
-call_outcome = sa.Enum(
+# Enum type definitions. create_type=False => these are NOT auto-created when a
+# column referencing them is built (create_table / add_column). We create them
+# ONCE, explicitly, with checkfirst=True below — which is idempotent and avoids
+# `DuplicateObjectError: type "userrole" already exists` on a fresh database
+# (the classic double-CREATE TYPE from reusing an enum across multiple tables).
+call_direction = ENUM("inbound", "outbound", name="calldirection", create_type=False)
+call_outcome = ENUM(
     "completed", "not_interested", "callback_requested", "transfer_requested",
-    "no_answer", "failed", "voicemail", name="calloutcome",
+    "no_answer", "failed", "voicemail", name="calloutcome", create_type=False,
 )
-lead_status = sa.Enum(
-    "new", "qualifying", "qualified", "unqualified", "booked", "lost", name="leadstatus"
+lead_status = ENUM(
+    "new", "qualifying", "qualified", "unqualified", "booked", "lost",
+    name="leadstatus", create_type=False,
 )
-property_type = sa.Enum(
-    "apartment", "villa", "plot", "commercial", "other", name="propertytype"
+property_type = ENUM(
+    "apartment", "villa", "plot", "commercial", "other",
+    name="propertytype", create_type=False,
 )
-appointment_type = sa.Enum(
-    "site_visit", "callback", "agent_transfer", name="appointmenttype"
+appointment_type = ENUM(
+    "site_visit", "callback", "agent_transfer", name="appointmenttype", create_type=False,
 )
-appointment_status = sa.Enum(
-    "scheduled", "confirmed", "cancelled", "completed", name="appointmentstatus"
+appointment_status = ENUM(
+    "scheduled", "confirmed", "cancelled", "completed",
+    name="appointmentstatus", create_type=False,
 )
-user_role = sa.Enum("owner", "admin", "agent", "viewer", name="userrole")
+user_role = ENUM("owner", "admin", "agent", "viewer", name="userrole", create_type=False)
 
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # Idempotent: checkfirst guards each CREATE TYPE. Because create_type=False,
+    # the create_table calls below will NOT re-emit CREATE TYPE for these.
     for enum in (
         call_direction, call_outcome, lead_status, property_type,
         appointment_type, appointment_status, user_role,

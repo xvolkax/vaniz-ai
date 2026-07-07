@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 revision = "0005_campaigns"
@@ -15,11 +16,15 @@ down_revision = "0004_analytics_idx"
 branch_labels = None
 depends_on = None
 
-campaign_status = sa.Enum(
-    "draft", "running", "paused", "completed", "failed", name="campaignstatus"
+# create_type=False: created explicitly (idempotent) below; create_table must
+# not re-emit CREATE TYPE for these named enums.
+campaign_status = ENUM(
+    "draft", "running", "paused", "completed", "failed",
+    name="campaignstatus", create_type=False,
 )
-target_status = sa.Enum(
-    "pending", "calling", "completed", "failed", "skipped", name="targetstatus"
+target_status = ENUM(
+    "pending", "calling", "completed", "failed", "skipped",
+    name="targetstatus", create_type=False,
 )
 
 
