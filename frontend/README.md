@@ -9,9 +9,29 @@ existing Priya control-plane API (`priya.api`).
 - TanStack Query (server state, caching, loading/error states)
 - React Router v6 (protected routes)
 
-## Pages
-Dashboard, Leads (+ detail), Properties, Calls (+ detail), Campaigns (+ detail),
-Appointments, Analytics, Settings.
+## Pages / Information architecture
+- **Dashboard** — KPIs, live agent status, recent activity, campaign performance
+- **Calls** — Live Calls · Call History (+ detail drawer) · Recordings · Transcripts
+- **Campaigns** — Outbound Campaigns · Lead Lists · Scheduled Calls · multi-step wizard · results
+- **AI Agent** — Agent Settings · Prompt Builder · Knowledge Base · Voice Settings · Call Flows
+- **Appointments**, **Leads** (temperature-segmented + drawer), **Analytics**, **Settings** (Org · Phone · Integrations · Team · Billing)
+
+## Design system
+Tailwind-based: brand indigo/violet palette, soft shadows (`shadow-card`/`shadow-pop`),
+rounded `2xl` cards, Inter type, inline `Icon` set, reusable kit (`StatCard`,
+`Drawer`/`Modal`, `Badge`, `Button`, `ProgressBar`, `SubNav`, `ComingSoon`,
+`EmptyState`). Light mode, mobile-responsive, no admin-template look.
+
+## Data honesty (no invented endpoints)
+Wired to real endpoints: Dashboard, Analytics, Calls, Campaigns (+ wizard/lifecycle/analytics),
+Leads (CRUD/import/export), Knowledge Base (Properties CRUD), Appointments
+(`/dashboard/summary`), Team (`/users`), Org (`/tenants/me`).
+
+Features without a backend endpoint are shown as polished **"coming soon"**
+surfaces (never fake data, never YAML/JSON): live call controls (listen/whisper/
+take-over), call recordings, prompt/voice persistence, visual flow builder,
+CRM integrations, buying numbers, and detailed billing.
+
 
 ## Auth
 JWT is obtained from `POST /auth/login` (or `POST /auth/register`) and stored in

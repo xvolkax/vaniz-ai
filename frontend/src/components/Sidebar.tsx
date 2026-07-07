@@ -1,56 +1,142 @@
-import { NavLink } from "react-router-dom";
+import { useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { Icon, type IconName } from "./ui/Icon";
 
-const NAV = [
-  { to: "/", label: "Dashboard", end: true, icon: "M3 12l9-9 9 9M4 10v10h16V10" },
-  { to: "/leads", label: "Leads", icon: "M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4z" },
-  { to: "/properties", label: "Properties", icon: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" },
-  { to: "/calls", label: "Calls", icon: "M3 5a2 2 0 012-2h2l2 5-3 2a11 11 0 006 6l2-3 5 2v2a2 2 0 01-2 2A16 16 0 013 5z" },
-  { to: "/campaigns", label: "Campaigns", icon: "M3 11l19-9-9 19-2-8-8-2z" },
-  { to: "/appointments", label: "Appointments", icon: "M8 7V3m8 4V3M3 11h18M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" },
-  { to: "/analytics", label: "Analytics", icon: "M4 19V5m0 14h16M8 15v-4m4 4V9m4 6v-2" },
-  { to: "/settings", label: "Settings", icon: "M10.3 3.3a2 2 0 013.4 0l.6 1a2 2 0 002.3 1l1.1-.3a2 2 0 012.4 2.4l-.3 1.1a2 2 0 001 2.3l1 .6a2 2 0 010 3.4l-1 .6a2 2 0 00-1 2.3l.3 1.1a2 2 0 01-2.4 2.4l-1.1-.3a2 2 0 00-2.3 1l-.6 1a2 2 0 01-3.4 0l-.6-1a2 2 0 00-2.3-1l-1.1.3a2 2 0 01-2.4-2.4l.3-1.1a2 2 0 00-1-2.3l-1-.6a2 2 0 010-3.4l1-.6a2 2 0 001-2.3l-.3-1.1A2 2 0 016.9 5l1.1.3a2 2 0 002.3-1l.6-1zM12 15a3 3 0 100-6 3 3 0 000 6z" },
+interface NavChild {
+  to: string;
+  label: string;
+}
+interface NavItem {
+  label: string;
+  icon: IconName;
+  to?: string;
+  end?: boolean;
+  children?: NavChild[];
+}
+
+const NAV: NavItem[] = [
+  { label: "Dashboard", icon: "home", to: "/", end: true },
+  {
+    label: "Calls",
+    icon: "phone",
+    children: [
+      { to: "/calls/live", label: "Live Calls" },
+      { to: "/calls/history", label: "Call History" },
+      { to: "/calls/recordings", label: "Recordings" },
+      { to: "/calls/transcripts", label: "Transcripts" },
+    ],
+  },
+  {
+    label: "Campaigns",
+    icon: "rocket",
+    children: [
+      { to: "/campaigns", label: "Outbound Campaigns" },
+      { to: "/campaigns/lead-lists", label: "Lead Lists" },
+      { to: "/campaigns/scheduled", label: "Scheduled Calls" },
+    ],
+  },
+  {
+    label: "AI Agent",
+    icon: "robot",
+    children: [
+      { to: "/agent/settings", label: "Agent Settings" },
+      { to: "/agent/prompt", label: "Prompt Builder" },
+      { to: "/agent/knowledge", label: "Knowledge Base" },
+      { to: "/agent/voice", label: "Voice Settings" },
+      { to: "/agent/flows", label: "Call Flows" },
+    ],
+  },
+  { label: "Appointments", icon: "calendar", to: "/appointments" },
+  { label: "Leads", icon: "users", to: "/leads" },
+  { label: "Analytics", icon: "chart", to: "/analytics" },
+  { label: "Settings", icon: "settings", to: "/settings" },
 ];
+
+function Group({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
+  const location = useLocation();
+  const groupActive = item.children?.some((c) => location.pathname.startsWith(c.to.split("?")[0]));
+  const [open, setOpen] = useState<boolean>(!!groupActive);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+          groupActive ? "text-slate-900" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        }`}
+      >
+        <Icon name={item.icon} className="h-5 w-5 shrink-0" />
+        <span className="flex-1 text-left">{item.label}</span>
+        <Icon name={open ? "chevron-down" : "chevron-right"} className="h-4 w-4 text-slate-400" />
+      </button>
+      {open && (
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3">
+          {item.children!.map((c) => (
+            <NavLink
+              key={c.to}
+              to={c.to}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                `block rounded-lg px-3 py-2 text-sm transition ${
+                  isActive
+                    ? "bg-brand-50 font-semibold text-brand-700"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                }`
+              }
+            >
+              {c.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <nav className="flex h-full flex-col gap-1 p-4">
-      <div className="mb-4 flex items-center gap-2 px-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 font-bold text-white">
+    <nav className="flex h-full flex-col gap-0.5 overflow-y-auto p-4">
+      <div className="mb-5 flex items-center gap-2.5 px-2">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-600 to-violet-500 font-bold text-white shadow-pop">
           P
         </div>
         <div>
-          <p className="font-semibold leading-tight text-slate-900">Priya</p>
-          <p className="text-xs text-slate-500">Broker Console</p>
+          <p className="text-[15px] font-bold leading-tight text-slate-900">Priya AI</p>
+          <p className="text-xs text-slate-400">Real-Estate Calling</p>
         </div>
       </div>
-      {NAV.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-              isActive
-                ? "bg-brand-50 text-brand-700"
-                : "text-slate-600 hover:bg-slate-100"
-            }`
-          }
-        >
-          <svg
-            className="h-5 w-5 shrink-0"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+
+      {NAV.map((item) =>
+        item.children ? (
+          <Group key={item.label} item={item} onNavigate={onNavigate} />
+        ) : (
+          <NavLink
+            key={item.label}
+            to={item.to!}
+            end={item.end}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+                isActive
+                  ? "bg-brand-50 text-brand-700 shadow-sm"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              }`
+            }
           >
-            <path d={item.icon} />
-          </svg>
-          {item.label}
-        </NavLink>
-      ))}
+            <Icon name={item.icon} className="h-5 w-5 shrink-0" />
+            {item.label}
+          </NavLink>
+        )
+      )}
+
+      <div className="mt-auto px-2 pt-6">
+        <div className="rounded-2xl bg-gradient-to-br from-brand-600 to-violet-600 p-4 text-white shadow-pop">
+          <p className="text-sm font-semibold">Priya is working 24/7</p>
+          <p className="mt-1 text-xs text-white/80">
+            Your AI agent calls, qualifies and books — while you close deals.
+          </p>
+        </div>
+      </div>
     </nav>
   );
 }
