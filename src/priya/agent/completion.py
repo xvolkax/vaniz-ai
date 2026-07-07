@@ -128,7 +128,10 @@ async def finalize_call(ctx: CallContext, outcome: CallOutcome | None = None) ->
     band = lead.qualification_band()
 
     if outcome is None:
-        if lead.interested is False:
+        if not ctx.answered:
+            # Callee never picked up (rang out / busy / declined / voicemail).
+            outcome = CallOutcome.no_answer
+        elif lead.interested is False:
             outcome = CallOutcome.not_interested
         else:
             outcome = CallOutcome.completed
@@ -179,6 +182,7 @@ async def finalize_call(ctx: CallContext, outcome: CallOutcome | None = None) ->
         await call_repo.finalize(
             ctx.call_id,
             ended_at=datetime.now(timezone.utc),
+            answered_at=ctx.answered_at,
             outcome=outcome,
             final_state=ctx.tracker.state.value,
             **ctx.latency.as_call_fields(),
@@ -222,8 +226,9 @@ async def finalize_call(ctx: CallContext, outcome: CallOutcome | None = None) ->
     if lead_status == LeadStatus.qualified:
         m.LEADS_QUALIFIED.inc()
 
-    # Fire-and-record WhatsApp follow-up (Phase 1 = noop logger)
-    if lead.interested is not False and (lead.phone_number or ctx.caller_number):
+    # Fire-and-record WhatsApp follow-up (Phase 1 = noop logger). Skip entirely
+    # when the call was never answered — no conversation happened.
+    if ctx.answered and lead.interested is not False and (lead.phone_number or ctx.caller_number):
         payload = FollowUpPayload(
             phone_number=lead.phone_number or ctx.caller_number,  # type: ignore[arg-type]
             name=lead.name,

@@ -349,11 +349,22 @@ class CallRepository:
             return None
         ended = fields.pop("ended_at", datetime.now(timezone.utc))
         call.ended_at = ended
-        if call.started_at:
-            started = call.started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-            call.duration_seconds = (ended - started).total_seconds()
+
+        # Persist the real pickup time if provided, then measure duration from it.
+        answered_at = fields.pop("answered_at", None)
+        if answered_at is not None:
+            call.answered_at = answered_at
+
+        # Duration is billed from the moment the callee answered — NOT from the
+        # dial/connect time. A call that was never answered has 0 duration.
+        if call.answered_at is not None:
+            answered = call.answered_at
+            if answered.tzinfo is None:
+                answered = answered.replace(tzinfo=timezone.utc)
+            call.duration_seconds = max(0.0, (ended - answered).total_seconds())
+        else:
+            call.duration_seconds = 0.0
+
         for key, value in fields.items():
             if value is not None:
                 setattr(call, key, value)

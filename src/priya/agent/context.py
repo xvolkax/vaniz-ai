@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from priya.agent.state import ConversationTracker
 from priya.analytics.latency import LatencyTracker
@@ -36,6 +37,14 @@ class CallContext:
     tenant_id: uuid.UUID | None = None
     campaign_id: uuid.UUID | None = None
     finalized: bool = False
+    # Answer tracking. `answered` flips true the moment the callee actually picks
+    # up (SIP callStatus -> active) or the first real user speech arrives.
+    # `answered_at` anchors the billable duration; NULL => never answered.
+    answered: bool = False
+    answered_at: datetime | None = None
+    # Guards the goodbye + call-teardown path in finalize_call_tool so a second
+    # tool invocation can't speak a second goodbye or shut the session down twice.
+    shutdown_initiated: bool = False
     # Set by booking tools during the call; folded into the campaign target at
     # finalize (campaign reconciliation source of truth).
     site_visit_booked: bool = False

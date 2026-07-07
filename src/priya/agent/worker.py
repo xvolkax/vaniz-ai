@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 from livekit import agents
 from livekit.agents import (
@@ -44,7 +45,7 @@ from priya.calendar.factory import get_calendar_provider
 from priya.config import settings
 from priya.crm.factory import get_crm_adapter
 from priya.db.database import session_scope
-from priya.db.models import CallDirection, CallOutcome
+from priya.db.models import CallDirection
 from priya.db.repositories import CallRepository
 from priya.knowledge.factory import get_retriever
 from priya.utils.logging import configure_logging, get_logger
@@ -179,6 +180,42 @@ async def entrypoint(ctx: JobContext) -> None:
 
     m.ACTIVE_CALLS.inc()
 
+    # ---- Answer detection (accurate duration + real answer-rate) ----
+    # Duration must be billed from the moment the callee actually picks up, not
+    # from when the agent job connected. Inbound callers are already on the line
+    # when the agent joins, so they count as answered immediately. Outbound calls
+    # are only "answered" once the SIP callStatus flips to "active" (or, as a
+    # fallback, once the first real user speech is transcribed — see _wire_events).
+    def _mark_answered() -> None:
+        if not call_ctx.answered:
+            call_ctx.answered = True
+            call_ctx.answered_at = datetime.now(timezone.utc)
+            log.info("worker.call.answered", call_id=str(call_id), direction=direction.value)
+
+    if direction == CallDirection.inbound:
+        _mark_answered()
+    else:
+        # Outbound: watch the SIP participant's callStatus for the pickup moment.
+        def _check_sip_status(participant) -> None:  # noqa: ANN001
+            try:
+                status = (getattr(participant, "attributes", {}) or {}).get("sip.callStatus")
+                if status == "active":
+                    _mark_answered()
+            except Exception:  # noqa: BLE001
+                pass
+
+        @ctx.room.on("participant_attributes_changed")
+        def _on_attrs_changed(_changed, participant) -> None:  # noqa: ANN001
+            _check_sip_status(participant)
+
+        @ctx.room.on("participant_connected")
+        def _on_participant_connected(participant) -> None:  # noqa: ANN001
+            _check_sip_status(participant)
+
+        # Participant may already be active by the time we wire the handlers.
+        for p in ctx.room.remote_participants.values():
+            _check_sip_status(p)
+
     # ---- Cartesia TTS kwargs (only pass a voice when configured) ----
     # sonic-3: sonic-2 was sunsetted by Cartesia. word_timestamps disabled because
     # Cartesia only aligns timestamps for en/de/es/fr on sonic models (Hindi warns),
@@ -253,10 +290,12 @@ async def entrypoint(ctx: JobContext) -> None:
         )
 
     # ---- Shutdown hook: guarantee finalization even on abrupt hangup ----
+    # Pass no explicit outcome so finalize_call classifies correctly: never
+    # answered -> no_answer (0s), otherwise completed / not_interested.
     async def _on_shutdown() -> None:
         m.ACTIVE_CALLS.dec()
         try:
-            await finalize_call(call_ctx, CallOutcome.completed)
+            await finalize_call(call_ctx)
         except Exception as exc:  # noqa: BLE001
             log.error("worker.finalize.error", error=str(exc))
 
@@ -343,6 +382,12 @@ def _wire_events(session: AgentSession, call_ctx: CallContext) -> None:
     def _on_transcribed(ev) -> None:  # noqa: ANN001
         try:
             if getattr(ev, "is_final", False):
+                # Fallback answer signal: real user speech means the line is live,
+                # even if the SIP callStatus event was missed.
+                if not call_ctx.answered:
+                    call_ctx.answered = True
+                    call_ctx.answered_at = datetime.now(timezone.utc)
+                    log.info("worker.call.answered", call_id=str(call_ctx.call_id), via="stt")
                 turns.on_stt_final(getattr(ev, "transcript", ""))
         except Exception as exc:  # noqa: BLE001
             log.debug("worker.transcribed.handler_error", error=str(exc))

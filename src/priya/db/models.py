@@ -316,6 +316,10 @@ class Call(Base):
     to_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When the callee actually picked up (SIP status -> active). NULL means the
+    # call was never answered (rang out / busy / declined / voicemail). Duration
+    # is measured from this moment, not from started_at (the dial/connect time).
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
