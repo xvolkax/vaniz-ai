@@ -322,6 +322,8 @@ class Call(Base):
     outcome: Mapped[CallOutcome | None] = mapped_column(Enum(CallOutcome), nullable=True)
     final_state: Mapped[str | None] = mapped_column(String(40), nullable=True)
     user_interruptions: Mapped[int] = mapped_column(Integer, default=0)
+    # URL to the call recording (populated by egress when recording is enabled).
+    recording_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Aggregated latency metrics (ms)
     avg_stt_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)

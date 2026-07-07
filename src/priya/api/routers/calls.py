@@ -18,15 +18,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from priya.api.schemas import (
+    ActiveCallItem,
+    ActiveCallsResponse,
     AppointmentItem,
     CallDetailResponse,
     CallListItem,
     CallListResponse,
     LatencyMetrics,
+    ListenTokenResponse,
 )
-from priya.auth.dependencies import CurrentUser, get_current_user, get_db
-from priya.db.models import Call, CallDirection, CallOutcome
+from priya.auth.dependencies import CurrentUser, get_current_user, get_db, require_role
+from priya.config import settings
+from priya.db.models import Call, CallDirection, CallOutcome, UserRole
 from priya.db.repositories import AppointmentRepository, CallRepository
+from priya.telephony.control import end_call, listen_token
 from priya.utils.logging import get_logger
 
 router = APIRouter(prefix="/calls", tags=["calls"])
@@ -117,10 +122,71 @@ async def list_calls(
             duration_seconds=c.duration_seconds,
             outcome=c.outcome,
             qualification_score=_score_for(c),
+            recording_url=c.recording_url,
         )
         for c in rows
     ]
     return CallListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+# --------------------------------------------------------------------------- #
+# Live calls (declared before /{call_id} so "active" isn't parsed as an id)
+# --------------------------------------------------------------------------- #
+@router.get("/active", response_model=ActiveCallsResponse)
+async def list_active_calls(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ActiveCallsResponse:
+    rows = await CallRepository(session).list_active(user.tenant_id)
+    return ActiveCallsResponse(
+        items=[
+            ActiveCallItem(
+                id=c.id,
+                lead_id=c.lead_id,
+                lead_name=c.lead.name if c.lead is not None else None,
+                phone_number=_phone_for(c),
+                direction=c.direction,
+                started_at=c.started_at,
+            )
+            for c in rows
+        ]
+    )
+
+
+@router.post("/{call_id}/hangup", status_code=status.HTTP_204_NO_CONTENT)
+async def hangup_call(
+    call_id: uuid.UUID,
+    user: CurrentUser = Depends(require_role(UserRole.agent)),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    call = await CallRepository(session).get(call_id)
+    if call is None or call.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if not call.room_name:
+        raise HTTPException(status_code=409, detail="Call is not live")
+    try:
+        await end_call(call.room_name)
+    except Exception as exc:  # noqa: BLE001
+        log.error("calls.hangup.error", error=str(exc))
+        raise HTTPException(status_code=502, detail="Failed to end call") from exc
+
+
+@router.post("/{call_id}/listen-token", response_model=ListenTokenResponse)
+async def get_listen_token(
+    call_id: uuid.UUID,
+    user: CurrentUser = Depends(require_role(UserRole.agent)),
+    session: AsyncSession = Depends(get_db),
+) -> ListenTokenResponse:
+    call = await CallRepository(session).get(call_id)
+    if call is None or call.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if not call.room_name:
+        raise HTTPException(status_code=409, detail="Call is not live")
+    try:
+        token = listen_token(call.room_name, identity=f"supervisor-{user.id}")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ListenTokenResponse(url=settings.livekit_url, token=token, room=call.room_name)
 
 
 @router.get("/{call_id}", response_model=CallDetailResponse)
@@ -155,6 +221,7 @@ async def get_call(
         duration_seconds=call.duration_seconds,
         outcome=call.outcome,
         final_state=call.final_state,
+        recording_url=call.recording_url,
         transcript=summary.transcript if summary else None,
         summary=summary.summary if summary else None,
         key_requirements=summary.key_requirements if summary else None,

@@ -241,6 +241,22 @@ class CallRepository:
         )
         return list(res.scalars().all())
 
+    async def list_active(self, tenant_id: uuid.UUID) -> list[Call]:
+        """In-progress calls: started but not yet ended (tenant-scoped)."""
+        res = await self.session.execute(
+            select(Call)
+            .where(Call.tenant_id == tenant_id, Call.ended_at.is_(None))
+            .options(selectinload(Call.lead))
+            .order_by(Call.started_at.desc())
+        )
+        return list(res.scalars().all())
+
+    async def set_recording_url(self, call_id: uuid.UUID, url: str) -> None:
+        call = await self.get(call_id)
+        if call is not None:
+            call.recording_url = url
+            await self.session.flush()
+
     # ----------------------------------------------------------------- #
     # Filtered querying for the dashboard list (tenant-scoped)
     # ----------------------------------------------------------------- #

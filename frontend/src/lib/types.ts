@@ -166,6 +166,22 @@ export interface CallListItem {
   duration_seconds: number | null;
   outcome: CallOutcome | null;
   qualification_score: number | null;
+  recording_url: string | null;
+}
+
+export interface ActiveCall {
+  id: string;
+  lead_id: string | null;
+  lead_name: string | null;
+  phone_number: string | null;
+  direction: CallDirection;
+  started_at: string;
+}
+
+export interface ListenToken {
+  url: string;
+  token: string;
+  room: string;
 }
 
 export interface LatencyMetrics {
@@ -192,6 +208,7 @@ export interface CallDetail {
   duration_seconds: number | null;
   outcome: CallOutcome | null;
   final_state: string | null;
+  recording_url: string | null;
   transcript: { role?: string; text?: string }[] | null;
   summary: string | null;
   key_requirements: string | null;

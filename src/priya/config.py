@@ -124,6 +124,19 @@ class Settings(BaseSettings):
     # if tenants are provisioned manually / via billing.
     allow_public_signup: bool = Field(default=True, alias="ALLOW_PUBLIC_SIGNUP")
 
+    # ---------- Call recording (LiveKit egress) ----------
+    # When true, the worker starts room egress so calls are recorded; the
+    # resulting URL is stored on the call. Requires S3-compatible storage.
+    recording_enabled: bool = Field(default=False, alias="RECORDING_ENABLED")
+    recording_s3_bucket: str = Field(default="", alias="RECORDING_S3_BUCKET")
+    recording_s3_region: str = Field(default="", alias="RECORDING_S3_REGION")
+    recording_s3_access_key: str = Field(default="", alias="RECORDING_S3_ACCESS_KEY")
+    recording_s3_secret: str = Field(default="", alias="RECORDING_S3_SECRET")
+    recording_s3_endpoint: str = Field(default="", alias="RECORDING_S3_ENDPOINT")
+    # Public base URL to serve recordings (e.g. CDN / bucket public URL). The
+    # recording key is appended: {base}/{key}.
+    recording_public_base_url: str = Field(default="", alias="RECORDING_PUBLIC_BASE_URL")
+
     # ---------- Campaign execution engine ----------
     # Safety cap on simultaneous outbound calls per campaign (per API replica).
     campaign_max_concurrency: int = Field(default=10, alias="CAMPAIGN_MAX_CONCURRENCY")

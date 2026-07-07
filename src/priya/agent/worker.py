@@ -288,6 +288,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.generate_reply(instructions=f"Say exactly: {greeting}")
 
+    # ---- Optional call recording (guarded; never blocks the call) ----
+    if settings.recording_enabled:
+        try:
+            from priya.telephony.recording import start_room_recording
+
+            rec_url = await start_room_recording(ctx.room.name, str(call_id))
+            if rec_url:
+                async with session_scope() as session:
+                    await CallRepository(session).set_recording_url(call_id, rec_url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("worker.recording.error", error=str(exc))
+
 
 def _wire_events(session: AgentSession, call_ctx: CallContext) -> None:
     """Attach latency, transcript and interruption event handlers.

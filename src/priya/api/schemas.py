@@ -332,6 +332,26 @@ class CallListItem(BaseModel):
     duration_seconds: float | None = None
     outcome: CallOutcome | None = None
     qualification_score: int | None = None
+    recording_url: str | None = None
+
+
+class ActiveCallItem(BaseModel):
+    id: uuid.UUID
+    lead_id: uuid.UUID | None = None
+    lead_name: str | None = None
+    phone_number: str | None = None
+    direction: CallDirection
+    started_at: datetime
+
+
+class ActiveCallsResponse(BaseModel):
+    items: list[ActiveCallItem]
+
+
+class ListenTokenResponse(BaseModel):
+    url: str
+    token: str
+    room: str
 
 
 class CallListResponse(BaseModel):
@@ -365,6 +385,7 @@ class CallDetailResponse(BaseModel):
     duration_seconds: float | None = None
     outcome: CallOutcome | None = None
     final_state: str | None = None
+    recording_url: str | None = None
 
     # Conversation intelligence (from ConversationSummary)
     transcript: list | None = None

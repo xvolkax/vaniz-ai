@@ -105,16 +105,22 @@ export function CallDetailDrawer({ callId, onClose }: { callId: string | null; o
             </Section>
           )}
 
-          {/* Recording (not stored yet) */}
-          <div className="flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white/60 p-4">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-              <Icon name="recording" className="h-5 w-5" />
-            </span>
-            <div className="text-sm">
-              <p className="font-medium text-slate-700">Call recording</p>
-              <p className="text-xs text-slate-400">Recording capture is coming soon.</p>
+          {/* Recording */}
+          {data.recording_url ? (
+            <Section title="Recording">
+              <audio controls preload="none" src={data.recording_url} className="w-full" />
+            </Section>
+          ) : (
+            <div className="flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white/60 p-4">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                <Icon name="recording" className="h-5 w-5" />
+              </span>
+              <div className="text-sm">
+                <p className="font-medium text-slate-700">No recording</p>
+                <p className="text-xs text-slate-400">Enable recording on your workspace to capture call audio.</p>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Transcript */}
           <Section title="Transcript">
