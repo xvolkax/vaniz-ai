@@ -1,6 +1,7 @@
 """Completion function tool exposed to the LLM."""
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 from livekit.agents import RunContext, function_tool
@@ -10,6 +11,7 @@ from priya.agent.completion import finalize_call
 from priya.agent.context import CallContext
 from priya.agent.state import ConversationState
 from priya.db.models import CallOutcome
+from priya.telephony.control import end_call
 from priya.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -76,9 +78,26 @@ async def finalize_call_tool(
     except Exception as exc:  # noqa: BLE001 — never let TTS failure block teardown
         log.warning("tool.finalize_call.goodbye_error", call_id=str(ctx.call_id), error=str(exc))
 
-    # ---- 3) Terminate the call (same mechanism as transfer_to_human) ----
+    # Small guard so the tail of the goodbye reaches the caller's SIP leg before
+    # the room is torn down (playout completion != carrier-side flush).
+    await asyncio.sleep(0.5)
+
+    # ---- 3) Terminate the call — DROP THE CALLER, not just the agent ----
+    # session.shutdown() alone does NOT hang up the caller: the worker starts the
+    # room with delete_room_on_close=False (so warm transfers can outlive Priya),
+    # so shutting the agent down leaves the caller connected to an empty room.
+    # For a normal call end we must delete the room to drop the caller's SIP leg —
+    # the same mechanism the dashboard hangup uses (telephony.control.end_call).
     log.info("tool.finalize_call.shutdown_initiated", call_id=str(ctx.call_id))
-    session.shutdown()
+    try:
+        await end_call(ctx.room_name)
+    except Exception as exc:  # noqa: BLE001
+        log.error("tool.finalize_call.end_call_error", call_id=str(ctx.call_id), error=str(exc))
+        # Fallback: at least detach the agent so it stops speaking.
+        try:
+            session.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
     log.info("tool.finalize_call.shutdown_complete", call_id=str(ctx.call_id))
 
     # Return nothing so the LLM does not generate a further turn after goodbye.
