@@ -328,14 +328,16 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.generate_reply(instructions=f"Say exactly: {greeting}")
 
     # ---- Optional call recording (guarded; never blocks the call) ----
+    # Stores ONLY the object key on the call row (bucket stays private; playback
+    # is served later via short-lived presigned URLs from the API).
     if settings.recording_enabled:
         try:
             from priya.telephony.recording import start_room_recording
 
-            rec_url = await start_room_recording(ctx.room.name, str(call_id))
-            if rec_url:
+            rec_key = await start_room_recording(ctx.room.name, str(call_id))
+            if rec_key:
                 async with session_scope() as session:
-                    await CallRepository(session).set_recording_url(call_id, rec_url)
+                    await CallRepository(session).set_recording_key(call_id, rec_key)
         except Exception as exc:  # noqa: BLE001
             log.warning("worker.recording.error", error=str(exc))
 

@@ -251,10 +251,11 @@ class CallRepository:
         )
         return list(res.scalars().all())
 
-    async def set_recording_url(self, call_id: uuid.UUID, url: str) -> None:
+    async def set_recording_key(self, call_id: uuid.UUID, key: str) -> None:
+        """Persist ONLY the storage object key (never a URL) for the recording."""
         call = await self.get(call_id)
         if call is not None:
-            call.recording_url = url
+            call.recording_key = key
             await self.session.flush()
 
     # ----------------------------------------------------------------- #

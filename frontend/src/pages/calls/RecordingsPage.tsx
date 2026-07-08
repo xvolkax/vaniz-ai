@@ -6,11 +6,12 @@ import { Card, PageHeader, Input } from "@/components/ui/Primitives";
 import { Icon } from "@/components/ui/Icon";
 import { SubNav, EmptyState, Skeleton } from "@/components/ui/Bits";
 import { OutcomeBadge } from "@/components/StatusBadges";
+import { RecordingPlayer } from "@/components/RecordingPlayer";
 import { CALLS_SUBNAV } from "./CallHistoryPage";
 import { formatDateTime, formatDuration, initials, titleCase } from "@/lib/format";
 
-// Recordings are data-driven: any call with a recording_url gets an audio
-// player. Recording capture is enabled server-side (RECORDING_ENABLED + egress).
+// Recordings are data-driven: any call with has_recording gets a secure audio
+// player that fetches a short-lived presigned URL on demand (private bucket).
 export function RecordingsPage() {
   const [search, setSearch] = useState("");
   const [applied, setApplied] = useState("");
@@ -23,7 +24,7 @@ export function RecordingsPage() {
       }),
   });
 
-  const withRecording = (data?.items ?? []).filter((c) => !!c.recording_url);
+  const withRecording = (data?.items ?? []).filter((c) => c.has_recording);
 
   return (
     <div>
@@ -62,11 +63,11 @@ export function RecordingsPage() {
                   <p className="text-xs text-slate-400">{titleCase(c.direction)} · {formatDateTime(c.call_date)} · {formatDuration(c.duration_seconds)}</p>
                 </div>
                 <OutcomeBadge outcome={c.outcome} />
-                <a href={c.recording_url!} download className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-brand-600" title="Download">
-                  <Icon name="download" className="h-4 w-4" />
-                </a>
               </div>
-              <audio controls preload="none" src={c.recording_url!} className="mt-3 w-full" />
+              {/* Secure playback: fetches a short-lived presigned URL on demand. */}
+              <div className="mt-3">
+                <RecordingPlayer callId={c.id} available={c.has_recording} compact />
+              </div>
             </Card>
           ))}
         </div>

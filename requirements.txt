@@ -31,3 +31,6 @@ httpx>=0.27
 tenacity>=9.0
 python-dotenv>=1.0
 PyYAML>=6.0
+
+# S3-compatible storage (Cloudflare R2) — presigned recording URLs
+boto3>=1.35

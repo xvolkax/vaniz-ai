@@ -326,8 +326,13 @@ class Call(Base):
     outcome: Mapped[CallOutcome | None] = mapped_column(Enum(CallOutcome), nullable=True)
     final_state: Mapped[str | None] = mapped_column(String(40), nullable=True)
     user_interruptions: Mapped[int] = mapped_column(Integer, default=0)
-    # URL to the call recording (populated by egress when recording is enabled).
+    # Legacy full URL (pre-private-bucket). No longer written; kept for old rows.
     recording_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Object key of the recording in the (private) storage bucket, e.g.
+    # "recordings/<call_id>.mp4". We store ONLY the key — never a public URL or a
+    # presigned URL. Playback is served via short-lived presigned URLs minted
+    # on demand by GET /calls/{id}/recording.
+    recording_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Aggregated latency metrics (ms)
     avg_stt_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)

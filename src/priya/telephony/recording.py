@@ -1,16 +1,25 @@
-"""Call recording via LiveKit room-composite egress → S3-compatible storage.
+"""Call recording via LiveKit room-composite egress → private S3-compatible storage.
 
-Best-effort and fully guarded: only used when RECORDING_ENABLED and S3 settings
-are present. Returns the predictable public URL of the recording file (the file
-is finalized by LiveKit after the call ends) so it can be stored on the call row
-immediately.
+Security model: the storage bucket (Cloudflare R2 in production) stays PRIVATE.
+We store only the object KEY on the call row (never a public or presigned URL).
+Playback/download is served by minting short-lived presigned GET URLs on demand
+(see `generate_presigned_get_url`), gated behind dashboard authentication + RBAC.
+
+Both functions are best-effort and fully guarded — recording must never break a
+live call, and presign failures degrade gracefully.
 """
 from __future__ import annotations
+
+from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from livekit import api
 
 from priya.config import settings
 from priya.utils.logging import get_logger
+
+if TYPE_CHECKING:  # pragma: no cover
+    from mypy_boto3_s3.client import S3Client
 
 log = get_logger(__name__)
 
@@ -23,15 +32,21 @@ def _s3_configured() -> bool:
     )
 
 
-async def start_room_recording(room_name: str, call_id: str) -> str | None:
-    """Start room-composite egress to S3. Returns the public recording URL or None.
+def recording_key_for(call_id: str) -> str:
+    """Deterministic object key for a call's recording."""
+    return f"recordings/{call_id}.mp4"
 
-    Never raises — recording must never break a live call.
+
+async def start_room_recording(room_name: str, call_id: str) -> str | None:
+    """Start room-composite egress to the private bucket.
+
+    Returns the object KEY (e.g. "recordings/<call_id>.mp4") on success, or None
+    if recording is disabled/unconfigured or egress failed to start. Never raises.
     """
     if not settings.recording_enabled or not _s3_configured():
         return None
 
-    key = f"recordings/{call_id}.mp4"
+    key = recording_key_for(call_id)
     lk = api.LiveKitAPI(
         url=settings.livekit_url,
         api_key=settings.livekit_api_key,
@@ -51,17 +66,63 @@ async def start_room_recording(room_name: str, call_id: str) -> str | None:
                         bucket=settings.recording_s3_bucket,
                         region=settings.recording_s3_region or None,
                         endpoint=settings.recording_s3_endpoint or None,
+                        force_path_style=settings.recording_s3_force_path_style,
                     ),
                 )
             ],
         )
         await lk.egress.start_room_composite_egress(req)
-        base = settings.recording_public_base_url.rstrip("/")
-        url = f"{base}/{key}" if base else key
-        log.info("recording.started", room=room_name, call_id=call_id, url=url)
-        return url
+        log.info("recording.started", room=room_name, call_id=call_id, key=key)
+        return key
     except Exception as exc:  # noqa: BLE001 — never break the call
         log.warning("recording.start_failed", room=room_name, error=str(exc))
         return None
     finally:
         await lk.aclose()
+
+
+@lru_cache(maxsize=1)
+def _s3_client() -> "S3Client":
+    """Build a cached S3 client for presigning against the private bucket.
+
+    Presigning is a pure local (crypto) computation — no network call — so a
+    single shared, thread-safe boto3 client is fine on the async event loop.
+    `addressing_style=path` is required for Cloudflare R2 / MinIO.
+    """
+    import boto3
+    from botocore.config import Config
+
+    addressing = "path" if settings.recording_s3_force_path_style else "virtual"
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.recording_s3_endpoint or None,
+        aws_access_key_id=settings.recording_s3_access_key,
+        aws_secret_access_key=settings.recording_s3_secret,
+        region_name=settings.recording_s3_region or "auto",
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": addressing},
+            retries={"max_attempts": 2},
+        ),
+    )
+
+
+def generate_presigned_get_url(key: str, expires_in: int | None = None) -> str | None:
+    """Mint a short-lived presigned GET URL for a private object key.
+
+    Returns None if storage isn't configured or signing fails. Never raises.
+    The credentials are used only to sign the request locally — they are never
+    included in the returned URL beyond the standard SigV4 query parameters.
+    """
+    if not _s3_configured():
+        return None
+    ttl = expires_in or settings.recording_url_ttl_seconds
+    try:
+        return _s3_client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.recording_s3_bucket, "Key": key},
+            ExpiresIn=ttl,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("recording.presign_failed", key=key, error=str(exc))
+        return None

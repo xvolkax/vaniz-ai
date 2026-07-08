@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from priya.api.schemas import (
@@ -26,12 +27,14 @@ from priya.api.schemas import (
     CallListResponse,
     LatencyMetrics,
     ListenTokenResponse,
+    RecordingUrlResponse,
 )
 from priya.auth.dependencies import CurrentUser, get_current_user, get_db, require_role
 from priya.config import settings
 from priya.db.models import Call, CallDirection, CallOutcome, UserRole
 from priya.db.repositories import AppointmentRepository, CallRepository
 from priya.telephony.control import end_call, listen_token
+from priya.telephony.recording import generate_presigned_get_url
 from priya.utils.logging import get_logger
 
 router = APIRouter(prefix="/calls", tags=["calls"])
@@ -122,7 +125,7 @@ async def list_calls(
             duration_seconds=c.duration_seconds,
             outcome=c.outcome,
             qualification_score=_score_for(c),
-            recording_url=c.recording_url,
+            has_recording=c.recording_key is not None,
         )
         for c in rows
     ]
@@ -189,6 +192,56 @@ async def get_listen_token(
     return ListenTokenResponse(url=settings.livekit_url, token=token, room=call.room_name)
 
 
+@router.get("/{call_id}/recording")
+async def get_call_recording(
+    call_id: uuid.UUID,
+    redirect: bool = Query(
+        default=False,
+        description="If true, 302-redirect to the presigned URL instead of returning JSON.",
+    ),
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Return a short-lived presigned URL to play/download the call recording.
+
+    Security:
+      * Authenticated (any tenant user, same as call detail/list access).
+      * Tenant-scoped lookup prevents IDOR — a call from another tenant returns
+        404 (indistinguishable from "not found"), so IDs can't be enumerated.
+      * The bucket stays private; only a time-boxed presigned GET URL is exposed.
+        Access keys/secrets are never sent to the client.
+
+    Responses:
+      * 200 JSON {url, expires_in}  (default; consumed by the SPA)
+      * 302 redirect to the presigned URL when ?redirect=true
+      * 404 if the call doesn't exist, isn't in the caller's tenant, or has no
+            recording yet (not ready / not enabled)
+      * 503 if recording storage isn't configured or presigning failed
+    """
+    # Tenant-scoped query → authorization enforced at the SQL layer (same pattern
+    # as GET /calls/{id}). Missing OR cross-tenant both yield None => identical 404.
+    call = await CallRepository(session).get_detail(call_id, tenant_id=user.tenant_id)
+    if call is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
+
+    if not call.recording_key:
+        # No recording captured (not enabled, still processing, or never made).
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Recording not available"
+        )
+
+    url = generate_presigned_get_url(call.recording_key)
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recording storage not configured",
+        )
+
+    if redirect:
+        return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    return RecordingUrlResponse(url=url, expires_in=settings.recording_url_ttl_seconds)
+
+
 @router.get("/{call_id}", response_model=CallDetailResponse)
 async def get_call(
     call_id: uuid.UUID,
@@ -221,7 +274,7 @@ async def get_call(
         duration_seconds=call.duration_seconds,
         outcome=call.outcome,
         final_state=call.final_state,
-        recording_url=call.recording_url,
+        has_recording=call.recording_key is not None,
         transcript=summary.transcript if summary else None,
         summary=summary.summary if summary else None,
         key_requirements=summary.key_requirements if summary else None,

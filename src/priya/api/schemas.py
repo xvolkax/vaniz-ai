@@ -332,7 +332,9 @@ class CallListItem(BaseModel):
     duration_seconds: float | None = None
     outcome: CallOutcome | None = None
     qualification_score: int | None = None
-    recording_url: str | None = None
+    # True when a recording exists. The signed URL is fetched on demand from
+    # GET /calls/{id}/recording — never a raw storage URL here.
+    has_recording: bool = False
 
 
 class ActiveCallItem(BaseModel):
@@ -352,6 +354,13 @@ class ListenTokenResponse(BaseModel):
     url: str
     token: str
     room: str
+
+
+class RecordingUrlResponse(BaseModel):
+    """Short-lived presigned URL for playing/downloading a call recording."""
+
+    url: str
+    expires_in: int  # seconds until the presigned URL expires
 
 
 class CallListResponse(BaseModel):
@@ -385,7 +394,9 @@ class CallDetailResponse(BaseModel):
     duration_seconds: float | None = None
     outcome: CallOutcome | None = None
     final_state: str | None = None
-    recording_url: str | None = None
+    # True when a recording exists. Fetch the playable URL from
+    # GET /calls/{id}/recording (short-lived presigned URL).
+    has_recording: bool = False
 
     # Conversation intelligence (from ConversationSummary)
     transcript: list | None = None

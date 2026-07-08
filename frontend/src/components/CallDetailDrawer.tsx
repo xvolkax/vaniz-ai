@@ -3,9 +3,9 @@ import { api } from "@/lib/api";
 import type { CallDetail } from "@/lib/types";
 import { Drawer } from "@/components/ui/Drawer";
 import { Badge, type Tone } from "@/components/ui/Primitives";
-import { Icon } from "@/components/ui/Icon";
 import { Skeleton } from "@/components/ui/Bits";
 import { OutcomeBadge, ScorePill } from "@/components/StatusBadges";
+import { RecordingPlayer } from "@/components/RecordingPlayer";
 import { formatDateTime, formatDuration, titleCase } from "@/lib/format";
 
 function sentiment(outcome: string | null, score: number | null): { label: string; tone: Tone } {
@@ -105,22 +105,10 @@ export function CallDetailDrawer({ callId, onClose }: { callId: string | null; o
             </Section>
           )}
 
-          {/* Recording */}
-          {data.recording_url ? (
-            <Section title="Recording">
-              <audio controls preload="none" src={data.recording_url} className="w-full" />
-            </Section>
-          ) : (
-            <div className="flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white/60 p-4">
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                <Icon name="recording" className="h-5 w-5" />
-              </span>
-              <div className="text-sm">
-                <p className="font-medium text-slate-700">No recording</p>
-                <p className="text-xs text-slate-400">Enable recording on your workspace to capture call audio.</p>
-              </div>
-            </div>
-          )}
+          {/* Recording — secure presigned playback (private bucket) */}
+          <Section title="Recording">
+            <RecordingPlayer callId={data.id} available={data.has_recording} />
+          </Section>
 
           {/* Transcript */}
           <Section title="Transcript">

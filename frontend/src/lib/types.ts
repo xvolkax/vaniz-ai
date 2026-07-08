@@ -166,7 +166,12 @@ export interface CallListItem {
   duration_seconds: number | null;
   outcome: CallOutcome | null;
   qualification_score: number | null;
-  recording_url: string | null;
+  has_recording: boolean;
+}
+
+export interface RecordingUrl {
+  url: string;
+  expires_in: number;
 }
 
 export interface ActiveCall {
@@ -208,7 +213,7 @@ export interface CallDetail {
   duration_seconds: number | null;
   outcome: CallOutcome | null;
   final_state: string | null;
-  recording_url: string | null;
+  has_recording: boolean;
   transcript: { role?: string; text?: string }[] | null;
   summary: string | null;
   key_requirements: string | null;

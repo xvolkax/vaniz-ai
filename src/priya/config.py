@@ -133,6 +133,15 @@ class Settings(BaseSettings):
     recording_s3_access_key: str = Field(default="", alias="RECORDING_S3_ACCESS_KEY")
     recording_s3_secret: str = Field(default="", alias="RECORDING_S3_SECRET")
     recording_s3_endpoint: str = Field(default="", alias="RECORDING_S3_ENDPOINT")
+    # Path-style addressing (bucket in the URL path, not the host). Required for
+    # Cloudflare R2 / MinIO and other non-AWS S3-compatible stores. Leave false
+    # for AWS S3 (virtual-hosted style).
+    recording_s3_force_path_style: bool = Field(
+        default=False, alias="RECORDING_S3_FORCE_PATH_STYLE"
+    )
+    # TTL (seconds) for presigned GET URLs served to the dashboard. Kept short so
+    # a leaked URL is only briefly usable. 5-15 min is the sane range.
+    recording_url_ttl_seconds: int = Field(default=600, alias="RECORDING_URL_TTL_SECONDS")
     # Public base URL to serve recordings (e.g. CDN / bucket public URL). The
     # recording key is appended: {base}/{key}.
     recording_public_base_url: str = Field(default="", alias="RECORDING_PUBLIC_BASE_URL")
