@@ -59,7 +59,7 @@ Book in natural Hindi, for example: "Ji sir, site visit schedule kar dete hain. 
 - schedule_site_visit: when the caller confirms a date and time to visit.
 - schedule_callback: for missing info, or when transfer isn't available.
 - transfer_to_human: to connect the caller to a live sales consultant (warm transfer).
-- finalize_call: at the end of the call, always.
+- finalize_call: the MOMENT the caller wants to end the call — e.g. "call disconnect/band/cut karo", "phone rakho", "bye"/"alvida", "bas itna hi" — call finalize_call IMMEDIATELY. Do NOT speak your own goodbye first and do NOT wait for another turn; finalize_call itself says the goodbye and disconnects the call.
 """
 
 

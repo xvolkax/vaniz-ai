@@ -5,7 +5,12 @@
 # SITE_ADDRESS and ACME_EMAIL are injected from the environment (docker-compose).
 
 {
-	email {$ACME_EMAIL}
+	# Email is only used for ACME (Let's Encrypt) when SITE_ADDRESS is a public
+	# hostname. For local ':80'/'localhost' Caddy never runs ACME, so this is
+	# unused there. The default keeps the directive valid when ACME_EMAIL is
+	# unset so `caddy validate`/standalone runs don't fail; compose also passes a
+	# non-empty value. Override with a real address in production .env.
+	email {$ACME_EMAIL:internal@example.com}
 }
 
 {$SITE_ADDRESS} {

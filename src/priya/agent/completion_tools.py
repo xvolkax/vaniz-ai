@@ -36,27 +36,38 @@ async def finalize_call_tool(
     """Call ke end par ye tool call karo — jab saari zaroori baat ho gayi ho ya
     caller alvida keh raha ho. Ye lead summary, qualification score aur follow-up
     generate karta hai, phir alvida bol kar call disconnect kar deta hai."""
-    ctx = context.userdata
-    session = context.session
-
-    # ---- Re-entrancy guard (set synchronously, before any await) ----
-    # If the LLM emits finalize_call twice (parallel tool calls or a retry), the
-    # first invocation owns teardown; later ones become no-ops so we never speak
-    # two goodbyes or call session.shutdown() twice. finalize_call() itself is
-    # also idempotent (ctx.finalized), so lead/summary/metrics stay single-write.
-    if ctx.shutdown_initiated:
-        log.info("tool.finalize_call.already_initiated", call_id=str(ctx.call_id))
-        return None
-    ctx.shutdown_initiated = True
-
-    ctx.tracker.advance_to(ConversationState.CALL_COMPLETION)
-
     outcome_enum: CallOutcome | None = None
     if outcome:
         try:
             outcome_enum = CallOutcome(outcome)
         except ValueError:
             outcome_enum = None
+    await end_call_and_hangup(context.session, context.userdata, outcome_enum)
+    return None
+
+
+async def end_call_and_hangup(
+    session,  # noqa: ANN001 — AgentSession (avoids importing heavy type)
+    ctx: CallContext,
+    outcome_enum: CallOutcome | None = None,
+) -> bool:
+    """Finalize + speak goodbye + actually drop the caller. Idempotent.
+
+    Callable from BOTH the finalize_call tool (LLM-driven) and the worker's
+    deterministic hangup-intent detector, so the call ends on the first explicit
+    disconnect request even if the LLM forgets to call the tool.
+
+    Returns True if this invocation performed the teardown, False if another
+    path already started it.
+    """
+    # Re-entrancy guard set synchronously (before any await) so the tool path and
+    # the intent-detector path can never both run teardown / speak two goodbyes.
+    if ctx.shutdown_initiated:
+        log.info("tool.finalize_call.already_initiated", call_id=str(ctx.call_id))
+        return False
+    ctx.shutdown_initiated = True
+
+    ctx.tracker.advance_to(ConversationState.CALL_COMPLETION)
 
     # ---- 1) Finalize: save lead, summary, metrics, trigger WhatsApp follow-up ----
     log.info("tool.finalize_call.started", call_id=str(ctx.call_id))
@@ -69,9 +80,6 @@ async def finalize_call_tool(
     )
 
     # ---- 2) Speak the goodbye and WAIT until it has fully played out ----
-    # Awaiting the SpeechHandle waits for complete playout (SpeechHandle.__await__
-    # -> wait_for_playout), so the caller hears the entire line before we hang up.
-    # allow_interruptions=False mirrors transfer_to_human's closing line.
     try:
         await session.say(_GOODBYE_LINE, allow_interruptions=False)
         log.info("tool.finalize_call.goodbye_spoken", call_id=str(ctx.call_id))
@@ -83,22 +91,14 @@ async def finalize_call_tool(
     await asyncio.sleep(0.5)
 
     # ---- 3) Terminate the call — DROP THE CALLER, not just the agent ----
-    # session.shutdown() alone does NOT hang up the caller: the worker starts the
-    # room with delete_room_on_close=False (so warm transfers can outlive Priya),
-    # so shutting the agent down leaves the caller connected to an empty room.
-    # For a normal call end we must delete the room to drop the caller's SIP leg —
-    # the same mechanism the dashboard hangup uses (telephony.control.end_call).
     log.info("tool.finalize_call.shutdown_initiated", call_id=str(ctx.call_id))
     try:
         await end_call(ctx.room_name)
     except Exception as exc:  # noqa: BLE001
         log.error("tool.finalize_call.end_call_error", call_id=str(ctx.call_id), error=str(exc))
-        # Fallback: at least detach the agent so it stops speaking.
         try:
             session.shutdown()
         except Exception:  # noqa: BLE001
             pass
     log.info("tool.finalize_call.shutdown_complete", call_id=str(ctx.call_id))
-
-    # Return nothing so the LLM does not generate a further turn after goodbye.
-    return None
+    return True

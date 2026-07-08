@@ -78,7 +78,10 @@ services:
     # with automatic HTTPS for $SITE_ADDRESS. Certs persist in caddy_data.
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      # Must be NON-EMPTY: an empty value renders a bare `email` directive and
+      # crashes Caddy at config-adapt time. Local ':80' never uses it (no ACME);
+      # set a real address in production .env for Let's Encrypt expiry notices.
+      ACME_EMAIL: ${ACME_EMAIL:-internal@example.com}
     ports:
       - "80:80"
       - "443:443"

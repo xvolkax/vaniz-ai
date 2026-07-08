@@ -40,6 +40,7 @@ from priya.config import settings
 from priya.db.database import dispose_db, get_engine, init_db
 from priya.db.models import UserRole
 from priya.telephony.outbound import place_outbound_call
+from priya.telephony.recording import log_recording_config_status
 from priya.utils.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -55,6 +56,9 @@ async def lifespan(app: FastAPI):
             await campaign_engine.resume_running()
         except Exception as exc:  # noqa: BLE001 — never block startup on this
             log.warning("api.campaign_resume.error", error=str(exc))
+    # Fail loud (in logs) if recording is enabled but misconfigured, so the
+    # opaque 503 on /calls/{id}/recording has a clear root cause at startup.
+    log_recording_config_status("api")
     log.info("api.startup", version=__version__, region=settings.service_region)
     yield
     await campaign_engine.shutdown()

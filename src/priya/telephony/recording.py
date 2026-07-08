@@ -32,6 +32,66 @@ def _s3_configured() -> bool:
     )
 
 
+def recording_config_problems() -> list[str]:
+    """Return a list of human-readable problems with the recording config.
+
+    Empty list means recording is either disabled (nothing to validate) or fully
+    configured. Used by API + worker startup to fail loud instead of silently
+    returning 503 later. Only meaningful when RECORDING_ENABLED is true.
+    """
+    if not settings.recording_enabled:
+        return []
+
+    problems: list[str] = []
+    required = (
+        ("RECORDING_S3_BUCKET", settings.recording_s3_bucket),
+        ("RECORDING_S3_ACCESS_KEY", settings.recording_s3_access_key),
+        ("RECORDING_S3_SECRET", settings.recording_s3_secret),
+    )
+    missing = [name for name, val in required if not val]
+    if missing:
+        problems.append(f"missing/empty env: {', '.join(missing)}")
+
+    # R2 / MinIO (and anything using path-style) require a custom endpoint.
+    if settings.recording_s3_force_path_style and not settings.recording_s3_endpoint:
+        problems.append(
+            "RECORDING_S3_FORCE_PATH_STYLE=true but RECORDING_S3_ENDPOINT is empty"
+        )
+
+    # boto3 must be importable to mint presigned playback URLs (served by the API).
+    try:
+        import boto3  # noqa: F401
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"boto3 not importable (pip install boto3): {exc}")
+
+    return problems
+
+
+def log_recording_config_status(component: str) -> None:
+    """Log a clear, actionable line about recording configuration at startup.
+
+    `component` is just a tag for the log (e.g. "api" / "agent")."""
+    if not settings.recording_enabled:
+        log.info("recording.config.disabled", component=component)
+        return
+    problems = recording_config_problems()
+    if problems:
+        log.error(
+            "recording.config.incomplete",
+            component=component,
+            problems="; ".join(problems),
+            hint="Recording is ENABLED but cannot work until these are fixed.",
+        )
+    else:
+        log.info(
+            "recording.config.ok",
+            component=component,
+            bucket=settings.recording_s3_bucket,
+            endpoint=settings.recording_s3_endpoint or "(aws default)",
+            force_path_style=settings.recording_s3_force_path_style,
+        )
+
+
 def recording_key_for(call_id: str) -> str:
     """Deterministic object key for a call's recording."""
     return f"recordings/{call_id}.mp4"
@@ -115,6 +175,11 @@ def generate_presigned_get_url(key: str, expires_in: int | None = None) -> str |
     included in the returned URL beyond the standard SigV4 query parameters.
     """
     if not _s3_configured():
+        log.warning(
+            "recording.presign_skipped",
+            key=key,
+            reason="S3 not configured — check RECORDING_S3_BUCKET/ACCESS_KEY/SECRET on this process",
+        )
         return None
     ttl = expires_in or settings.recording_url_ttl_seconds
     try:

@@ -9,11 +9,11 @@ Handles inbound & outbound SIP calls dispatched to `AGENT_NAME`.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
 
-from livekit import agents
 from livekit.agents import (
     AgentSession,
     JobContext,
@@ -27,6 +27,7 @@ from livekit.plugins import cartesia, silero
 
 from priya.agent.assistant import PriyaAgent
 from priya.agent.completion import finalize_call
+from priya.agent.completion_tools import end_call_and_hangup
 from priya.agent.context import CallContext
 from priya.agent.llm_factory import build_llm
 from priya.agent.project_prompt import build_greeting, build_system_prompt, get_project_greeting
@@ -55,6 +56,34 @@ log = get_logger(__name__)
 
 
 # --------------------------------------------------------------------------- #
+# Deterministic end-call intent detection.
+# gpt-4o-mini sometimes speaks a goodbye without calling finalize_call, leaving
+# the caller connected. This net catches explicit disconnect requests and tears
+# the call down on the FIRST request, regardless of whether the LLM cooperates.
+# Kept intentionally narrow (needs a call/phone object + an end action, or an
+# unambiguous verb) so mid-call phrases like "thank you" don't hang up.
+# --------------------------------------------------------------------------- #
+_HANGUP_STRONG = (
+    "disconnect", "hang up", "hangup", "kaat do", "kaat dijiye", "kaat dena",
+    "kaat do call", "line kaat", "phone kaat", "call kaat",
+)
+_HANGUP_OBJECTS = ("call", "phone", "line", "kaal")
+_HANGUP_ACTIONS = ("band", "rakh", "khatam", "cut", "kaat", "end", "disconnect", "kaat")
+
+
+def _is_hangup_request(text: str) -> bool:
+    """True when the caller clearly asks to end/disconnect the call."""
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if any(p in t for p in _HANGUP_STRONG):
+        return True
+    if any(o in t for o in _HANGUP_OBJECTS) and any(a in t for a in _HANGUP_ACTIONS):
+        return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
 # Prewarm — load the VAD once per process (expensive), reused across jobs.
 # --------------------------------------------------------------------------- #
 def prewarm(proc: JobProcess) -> None:
@@ -62,6 +91,13 @@ def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
         min_silence_duration=0.25,  # snappy endpointing, tuned with turn detector
     )
+    # Surface recording misconfiguration once per worker process at startup.
+    try:
+        from priya.telephony.recording import log_recording_config_status
+
+        log_recording_config_status("agent")
+    except Exception as exc:  # noqa: BLE001 — never block prewarm
+        log.debug("worker.recording.config_check_error", error=str(exc))
     log.info("worker.prewarm.complete")
 
 
@@ -319,6 +355,24 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as exc:  # noqa: BLE001
             log.info("worker.noise_cancellation.disabled", reason=str(exc))
 
+    # ---- Start recording BEFORE the greeting so the ENTIRE call is captured ----
+    # Egress was previously started AFTER `generate_reply(greeting)`, so it only
+    # began once Priya's opening line had fully played — clipping the first
+    # several seconds (e.g. 37s call -> 28s recording). Starting it here, before
+    # session.start(), records the full conversation from call pickup. Stores
+    # ONLY the object key (bucket stays private; playback via presigned URLs).
+    if settings.recording_enabled:
+        try:
+            from priya.telephony.recording import start_room_recording
+
+            rec_key = await start_room_recording(ctx.room.name, str(call_id))
+            if rec_key:
+                # Distinct var name — must NOT shadow the AgentSession `session`.
+                async with session_scope() as db:
+                    await CallRepository(db).set_recording_key(call_id, rec_key)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("worker.recording.error", error=str(exc))
+
     await session.start(
         agent=PriyaAgent(instructions=agent_instructions),
         room=ctx.room,
@@ -326,20 +380,6 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     await session.generate_reply(instructions=f"Say exactly: {greeting}")
-
-    # ---- Optional call recording (guarded; never blocks the call) ----
-    # Stores ONLY the object key on the call row (bucket stays private; playback
-    # is served later via short-lived presigned URLs from the API).
-    if settings.recording_enabled:
-        try:
-            from priya.telephony.recording import start_room_recording
-
-            rec_key = await start_room_recording(ctx.room.name, str(call_id))
-            if rec_key:
-                async with session_scope() as session:
-                    await CallRepository(session).set_recording_key(call_id, rec_key)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("worker.recording.error", error=str(exc))
 
 
 def _wire_events(session: AgentSession, call_ctx: CallContext) -> None:
@@ -384,13 +424,24 @@ def _wire_events(session: AgentSession, call_ctx: CallContext) -> None:
     def _on_transcribed(ev) -> None:  # noqa: ANN001
         try:
             if getattr(ev, "is_final", False):
+                transcript = getattr(ev, "transcript", "") or ""
                 # Fallback answer signal: real user speech means the line is live,
                 # even if the SIP callStatus event was missed.
                 if not call_ctx.answered:
                     call_ctx.answered = True
                     call_ctx.answered_at = datetime.now(timezone.utc)
                     log.info("worker.call.answered", call_id=str(call_ctx.call_id), via="stt")
-                turns.on_stt_final(getattr(ev, "transcript", ""))
+                # Deterministic hangup: if the caller clearly asks to end the call,
+                # tear it down on the first request without relying on the LLM to
+                # call finalize_call. Idempotent guard prevents double teardown.
+                if _is_hangup_request(transcript) and not call_ctx.shutdown_initiated:
+                    log.info(
+                        "worker.hangup_intent.detected",
+                        call_id=str(call_ctx.call_id),
+                        text=transcript[:80],
+                    )
+                    asyncio.create_task(end_call_and_hangup(session, call_ctx))
+                turns.on_stt_final(transcript)
         except Exception as exc:  # noqa: BLE001
             log.debug("worker.transcribed.handler_error", error=str(exc))
 
